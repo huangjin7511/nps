@@ -28,13 +28,13 @@ jobs:
               curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh
               dep ensure
           fi
+      - name: Build
+        run: |
           curl -k -L -o "/opt/st/alist-linux-musl-mipsle.tar.gz" "https://github.com/AlistGo/alist/releases/download/$tag/alist-linux-musl-mipsle.tar.gz" 
           tar -xzvf /opt/st/alist-linux-musl-mipsle.tar.gz -C /opt/st
           tar -xvf /opt/st/upx-3.95-amd64_linux.tar.xz -C /opt
           chmod 777 /opt/upx-3.95-amd64_linux/upx
           chmod 777 /opt/st/strip
-      - name: Build
-        run: |
           chmod +x build.assets.upx.sh
           ./build.assets.upx.sh
       - name: Upload
@@ -108,13 +108,13 @@ jobs:
               curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh
               dep ensure
           fi
+      - name: Build
+        run: |
           curl -k -L -o "/opt/st/alist-linux-musl-mipsle.tar.gz" "https://github.com/AlistGo/alist/releases/download/$tag/alist-linux-musl-mipsle.tar.gz" 
           tar -xzvf /opt/st/alist-linux-musl-mipsle.tar.gz -C /opt/st
           tar -xvf /opt/st/upx-3.95-amd64_linux.tar.xz -C /opt
           chmod 777 /opt/upx-3.95-amd64_linux/upx
           chmod 777 /opt/st/strip
-      - name: Build
-        run: |
           chmod +x build.assets.upx.old.sh
           ./build.assets.upx.old.sh
       - name: Upload
