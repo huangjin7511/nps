@@ -79,7 +79,7 @@ jobs:
             windows_amd64_server.tar.gz
             npc_sdk.tar.gz
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.DEV_GITHUB_TOKEN }}
 
   build_assets_old:
 
@@ -130,4 +130,4 @@ jobs:
             windows_amd64_server_old.tar.gz
             npc_sdk_old.tar.gz
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.DEV_GITHUB_TOKEN }}
