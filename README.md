@@ -1,4 +1,4 @@
-# NPS Enhanced – NAT traversal and reverse proxy server
+# NPS Enhanced
 
 A high-performance NAT traversal and reverse proxy server with Web UI.
 
