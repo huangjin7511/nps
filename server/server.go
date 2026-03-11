@@ -3,13 +3,9 @@ package server
 import (
 	"errors"
 	"fmt"
-	"math"
 	"os"
-	"sort"
-	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/beego/beego"
@@ -25,10 +21,6 @@ import (
 	"github.com/djylb/nps/server/proxy"
 	"github.com/djylb/nps/server/proxy/httpproxy"
 	"github.com/djylb/nps/server/tool"
-	"github.com/shirou/gopsutil/v4/cpu"
-	"github.com/shirou/gopsutil/v4/load"
-	"github.com/shirou/gopsutil/v4/mem"
-	"github.com/shirou/gopsutil/v4/net"
 )
 
 var (
@@ -37,6 +29,8 @@ var (
 	once           sync.Once
 	HttpProxyCache = index.NewAnyIntIndex()
 )
+
+const pingTimeout = 15 * time.Second
 
 func init() {
 	RunList = sync.Map{}
@@ -186,8 +180,6 @@ func dealClientFlow() {
 	}
 }
 
-const pingTimeout = 15 * time.Second
-
 func PingClient(id int, addr string) int {
 	if id <= 0 {
 		return 0
@@ -329,4 +321,123 @@ func DelTask(id int) error {
 		}
 	}
 	return file.GetDb().DelTask(id)
+}
+
+// DelTunnelAndHostByClientId delete all host and tasks by client id
+func DelTunnelAndHostByClientId(clientId int, justDelNoStore bool) {
+	var ids []int
+	file.GetDb().JsonDb.Tasks.Range(func(key, value interface{}) bool {
+		v := value.(*file.Tunnel)
+		if justDelNoStore && !v.NoStore {
+			return true
+		}
+		if v.Client.Id == clientId {
+			ids = append(ids, v.Id)
+		}
+		return true
+	})
+	for _, id := range ids {
+		_ = DelTask(id)
+	}
+	ids = ids[:0]
+	file.GetDb().JsonDb.Hosts.Range(func(key, value interface{}) bool {
+		v := value.(*file.Host)
+		if justDelNoStore && !v.NoStore {
+			return true
+		}
+		if v.Client.Id == clientId {
+			ids = append(ids, v.Id)
+		}
+		return true
+	})
+	for _, id := range ids {
+		HttpProxyCache.Remove(id)
+		_ = file.GetDb().DelHost(id)
+	}
+}
+
+// DelClientConnect close the client
+func DelClientConnect(clientId int) {
+	Bridge.DelClient(clientId)
+}
+
+func dealClientData() {
+	//logs.Info("dealClientData.........")
+	file.GetDb().JsonDb.Clients.Range(func(key, value interface{}) bool {
+		v := value.(*file.Client)
+		if vv, ok := Bridge.Client.Load(v.Id); ok {
+			v.IsConnect = true
+			v.LastOnlineTime = time.Now().Format("2006-01-02 15:04:05")
+			cli := vv.(*bridge.Client)
+			node, ok := cli.GetNodeByUUID(cli.LastUUID)
+			var ver string
+			if ok {
+				ver = node.Version
+			}
+			count := cli.NodeCount()
+			if count > 1 {
+				ver = fmt.Sprintf("%s(%d)", ver, cli.NodeCount())
+			}
+			v.Version = ver
+		} else if v.Id <= 0 {
+			if allowLocalProxy, _ := beego.AppConfig.Bool("allow_local_proxy"); allowLocalProxy {
+				v.IsConnect = v.Status
+				v.Version = version.VERSION
+				v.Mode = "local"
+				v.LocalAddr = common.GetOutboundIP().String()
+				// Add Local Client
+				if _, exists := Bridge.Client.Load(v.Id); !exists && v.Status {
+					Bridge.Client.Store(v.Id, bridge.NewClient(v.Id, bridge.NewNode("127.0.0.1", version.VERSION, version.GetLatestIndex())))
+					logs.Debug("Inserted virtual client for ID %d", v.Id)
+				}
+			} else {
+				v.IsConnect = false
+			}
+		} else {
+			v.IsConnect = false
+		}
+		v.InletFlow = 0
+		v.ExportFlow = 0
+		return true
+	})
+	file.GetDb().JsonDb.Hosts.Range(func(key, value interface{}) bool {
+		h := value.(*file.Host)
+		c, err := file.GetDb().GetClient(h.Client.Id)
+		if err != nil {
+			return true
+		}
+		c.InletFlow += h.Flow.InletFlow
+		c.ExportFlow += h.Flow.ExportFlow
+		return true
+	})
+	file.GetDb().JsonDb.Tasks.Range(func(key, value interface{}) bool {
+		t := value.(*file.Tunnel)
+		c, err := file.GetDb().GetClient(t.Client.Id)
+		if err != nil {
+			return true
+		}
+		c.InletFlow += t.Flow.InletFlow
+		c.ExportFlow += t.Flow.ExportFlow
+		return true
+	})
+	//return
+}
+
+func flowSession(m time.Duration) {
+	file.GetDb().JsonDb.StoreHostToJsonFile()
+	file.GetDb().JsonDb.StoreTasksToJsonFile()
+	file.GetDb().JsonDb.StoreClientsToJsonFile()
+	file.GetDb().JsonDb.StoreGlobalToJsonFile()
+	once.Do(func() {
+		go func() {
+			ticker := time.NewTicker(m)
+			defer ticker.Stop()
+			for range ticker.C {
+				file.GetDb().JsonDb.StoreHostToJsonFile()
+				file.GetDb().JsonDb.StoreTasksToJsonFile()
+				file.GetDb().JsonDb.StoreClientsToJsonFile()
+				file.GetDb().JsonDb.StoreGlobalToJsonFile()
+			}
+		}()
+	})
 }

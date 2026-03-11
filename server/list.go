@@ -1,17 +1,11 @@
 package server
 
 import (
-	"fmt"
 	"math"
 	"sort"
-	"time"
 
-	"github.com/beego/beego"
-	"github.com/djylb/nps/bridge"
 	"github.com/djylb/nps/lib/common"
 	"github.com/djylb/nps/lib/file"
-	"github.com/djylb/nps/lib/logs"
-	"github.com/djylb/nps/lib/version"
 )
 
 func GetTunnel(start, length int, typeVal string, clientId int, search string, sortField string, order string) ([]*file.Tunnel, int) {
@@ -597,66 +591,4 @@ func GetClientList(start, length int, search, sortField, order string, clientId 
 
 	dealClientData()
 	return
-}
-
-func dealClientData() {
-	//logs.Info("dealClientData.........")
-	file.GetDb().JsonDb.Clients.Range(func(key, value interface{}) bool {
-		v := value.(*file.Client)
-		if vv, ok := Bridge.Client.Load(v.Id); ok {
-			v.IsConnect = true
-			v.LastOnlineTime = time.Now().Format("2006-01-02 15:04:05")
-			cli := vv.(*bridge.Client)
-			node, ok := cli.GetNodeByUUID(cli.LastUUID)
-			var ver string
-			if ok {
-				ver = node.Version
-			}
-			count := cli.NodeCount()
-			if count > 1 {
-				ver = fmt.Sprintf("%s(%d)", ver, cli.NodeCount())
-			}
-			v.Version = ver
-		} else if v.Id <= 0 {
-			if allowLocalProxy, _ := beego.AppConfig.Bool("allow_local_proxy"); allowLocalProxy {
-				v.IsConnect = v.Status
-				v.Version = version.VERSION
-				v.Mode = "local"
-				v.LocalAddr = common.GetOutboundIP().String()
-				// Add Local Client
-				if _, exists := Bridge.Client.Load(v.Id); !exists && v.Status {
-					Bridge.Client.Store(v.Id, bridge.NewClient(v.Id, bridge.NewNode("127.0.0.1", version.VERSION, version.GetLatestIndex())))
-					logs.Debug("Inserted virtual client for ID %d", v.Id)
-				}
-			} else {
-				v.IsConnect = false
-			}
-		} else {
-			v.IsConnect = false
-		}
-		v.InletFlow = 0
-		v.ExportFlow = 0
-		return true
-	})
-	file.GetDb().JsonDb.Hosts.Range(func(key, value interface{}) bool {
-		h := value.(*file.Host)
-		c, err := file.GetDb().GetClient(h.Client.Id)
-		if err != nil {
-			return true
-		}
-		c.InletFlow += h.Flow.InletFlow
-		c.ExportFlow += h.Flow.ExportFlow
-		return true
-	})
-	file.GetDb().JsonDb.Tasks.Range(func(key, value interface{}) bool {
-		t := value.(*file.Tunnel)
-		c, err := file.GetDb().GetClient(t.Client.Id)
-		if err != nil {
-			return true
-		}
-		c.InletFlow += t.Flow.InletFlow
-		c.ExportFlow += t.Flow.ExportFlow
-		return true
-	})
-	//return
 }

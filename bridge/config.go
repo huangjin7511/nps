@@ -225,7 +225,3 @@ loop:
 	}
 	_ = c.Close()
 }
-
-func (s *Bridge) IsServer() bool {
-	return true
-}

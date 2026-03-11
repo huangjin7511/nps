@@ -20,44 +20,6 @@ import (
 	"github.com/shirou/gopsutil/v4/net"
 )
 
-// DelTunnelAndHostByClientId delete all host and tasks by client id
-func DelTunnelAndHostByClientId(clientId int, justDelNoStore bool) {
-	var ids []int
-	file.GetDb().JsonDb.Tasks.Range(func(key, value interface{}) bool {
-		v := value.(*file.Tunnel)
-		if justDelNoStore && !v.NoStore {
-			return true
-		}
-		if v.Client.Id == clientId {
-			ids = append(ids, v.Id)
-		}
-		return true
-	})
-	for _, id := range ids {
-		_ = DelTask(id)
-	}
-	ids = ids[:0]
-	file.GetDb().JsonDb.Hosts.Range(func(key, value interface{}) bool {
-		v := value.(*file.Host)
-		if justDelNoStore && !v.NoStore {
-			return true
-		}
-		if v.Client.Id == clientId {
-			ids = append(ids, v.Id)
-		}
-		return true
-	})
-	for _, id := range ids {
-		HttpProxyCache.Remove(id)
-		_ = file.GetDb().DelHost(id)
-	}
-}
-
-// DelClientConnect close the client
-func DelClientConnect(clientId int) {
-	Bridge.DelClient(clientId)
-}
-
 var (
 	// Cache
 	cacheMu         sync.RWMutex
@@ -385,23 +347,4 @@ func GetMinVersion() string {
 
 func GetCurrentYear() int {
 	return time.Now().Year()
-}
-
-func flowSession(m time.Duration) {
-	file.GetDb().JsonDb.StoreHostToJsonFile()
-	file.GetDb().JsonDb.StoreTasksToJsonFile()
-	file.GetDb().JsonDb.StoreClientsToJsonFile()
-	file.GetDb().JsonDb.StoreGlobalToJsonFile()
-	once.Do(func() {
-		go func() {
-			ticker := time.NewTicker(m)
-			defer ticker.Stop()
-			for range ticker.C {
-				file.GetDb().JsonDb.StoreHostToJsonFile()
-				file.GetDb().JsonDb.StoreTasksToJsonFile()
-				file.GetDb().JsonDb.StoreClientsToJsonFile()
-				file.GetDb().JsonDb.StoreGlobalToJsonFile()
-			}
-		}()
-	})
 }

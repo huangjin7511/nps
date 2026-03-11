@@ -11,6 +11,14 @@ import (
 	"github.com/djylb/nps/server/tool"
 )
 
+func (s *IndexController) GetTunnel() {
+	start, length := s.GetAjaxParams()
+	taskType := s.getEscapeString("type")
+	clientId := s.GetIntNoErr("client_id")
+	list, cnt := server.GetTunnel(start, length, taskType, clientId, s.getEscapeString("search"), s.getEscapeString("sort"), s.getEscapeString("order"))
+	s.AjaxTable(list, cnt, cnt, nil)
+}
+
 func (s *IndexController) Add() {
 	if s.Ctx.Request.Method == "GET" {
 		s.Data["type"] = s.getEscapeString("type")

@@ -250,28 +250,6 @@ func (s *Bridge) CliProcess(c *conn.Conn, tunnelType string) {
 	//return
 }
 
-func (s *Bridge) DelClient(id int) {
-	if v, ok := s.Client.Load(id); ok {
-		client := v.(*Client)
-		_ = client.Close()
-
-		s.Client.Delete(id)
-
-		if file.GetDb().IsPubClient(id) {
-			return
-		}
-		if c, err := file.GetDb().GetClient(id); err == nil {
-			select {
-			case s.CloseClient <- c.Id:
-			default:
-				logs.Warn("CloseClient channel is full, failed to send close signal for client %d", c.Id)
-			}
-		}
-	}
-}
-
-// use different
-
 func (s *Bridge) typeDeal(c *conn.Conn, id, ver int, vs, tunnelType string, first bool) {
 	addr := c.RemoteAddr()
 	flag, err := c.ReadFlag()
@@ -575,7 +553,6 @@ func (s *Bridge) typeDeal(c *conn.Conn, id, ver int, vs, tunnelType string, firs
 }
 
 // register ip
-
 func (s *Bridge) register(c *conn.Conn) {
 	_ = c.SetReadDeadline(time.Now().Add(5 * time.Second))
 	var hour int32

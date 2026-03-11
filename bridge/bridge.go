@@ -6,6 +6,7 @@ import (
 
 	"github.com/djylb/nps/lib/conn"
 	"github.com/djylb/nps/lib/file"
+	"github.com/djylb/nps/lib/logs"
 )
 
 var (
@@ -50,4 +51,28 @@ func NewTunnel(ipVerify bool, runList *sync.Map, disconnectTime int) *Bridge {
 		runList:        runList,
 		disconnectTime: disconnectTime,
 	}
+}
+
+func (s *Bridge) DelClient(id int) {
+	if v, ok := s.Client.Load(id); ok {
+		client := v.(*Client)
+		_ = client.Close()
+
+		s.Client.Delete(id)
+
+		if file.GetDb().IsPubClient(id) {
+			return
+		}
+		if c, err := file.GetDb().GetClient(id); err == nil {
+			select {
+			case s.CloseClient <- c.Id:
+			default:
+				logs.Warn("CloseClient channel is full, failed to send close signal for client %d", c.Id)
+			}
+		}
+	}
+}
+
+func (s *Bridge) IsServer() bool {
+	return true
 }
