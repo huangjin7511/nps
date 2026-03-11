@@ -15,6 +15,7 @@ import (
 	"github.com/djylb/nps/lib/crypt"
 	"github.com/djylb/nps/lib/logs"
 	"github.com/djylb/nps/lib/mux"
+	"github.com/djylb/nps/lib/p2p"
 	"github.com/quic-go/quic-go"
 	"github.com/xtaci/kcp-go/v5"
 )
@@ -196,7 +197,7 @@ func (s *TRPClient) newUdpConn(localAddr, rAddr string, md5Password string) {
 	var remoteAddress, role, mode, data string
 	sendData := string(crypt.GetHMAC(s.vKey, crypt.GetCert().Certificate[0]))
 	//logs.Debug("newUdpConn %s %s", localAddr, rAddr)
-	if localConn, remoteAddress, localAddr, role, mode, data, err = handleP2PUdp(s.ctx, localAddr, rAddr, md5Password, common.WORK_P2P_PROVIDER, P2PMode, sendData); err != nil {
+	if localConn, remoteAddress, localAddr, role, mode, data, err = p2p.HandleUDP(s.ctx, localAddr, rAddr, md5Password, common.WORK_P2P_PROVIDER, P2PMode, sendData); err != nil {
 		logs.Error("handle P2P error: %v", err)
 		return
 	}

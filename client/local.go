@@ -17,6 +17,7 @@ import (
 	"github.com/djylb/nps/lib/file"
 	"github.com/djylb/nps/lib/logs"
 	"github.com/djylb/nps/lib/mux"
+	"github.com/djylb/nps/lib/p2p"
 	"github.com/djylb/nps/server/proxy"
 	"github.com/quic-go/quic-go"
 )
@@ -674,7 +675,7 @@ func (mgr *P2PManager) newUdpConn(localAddr string, cfg *config.CommonConfig, l 
 
 	var remoteAddr, role, mode, data string
 	var localConn net.PacketConn
-	localConn, remoteAddr, localAddr, role, mode, data, err = handleP2PUdp(mgr.ctx, localAddr, rAddr, crypt.Md5(l.Password), common.WORK_P2P_VISITOR, P2PMode, "")
+	localConn, remoteAddr, localAddr, role, mode, data, err = p2p.HandleUDP(mgr.ctx, localAddr, rAddr, crypt.Md5(l.Password), common.WORK_P2P_VISITOR, P2PMode, "")
 	if err != nil {
 		logs.Error("Handle P2P failed: %v", err)
 		return
