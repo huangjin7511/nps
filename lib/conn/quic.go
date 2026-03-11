@@ -2,9 +2,11 @@ package conn
 
 import (
 	"context"
+	"crypto/tls"
 	"net"
 	"time"
 
+	"github.com/djylb/nps/lib/common"
 	"github.com/quic-go/quic-go"
 )
 
@@ -69,4 +71,25 @@ func (q *QuicAutoCloseConn) Close() error {
 	case <-ctx.Done():
 	}
 	return q.sess.CloseWithError(0, "close")
+}
+
+func DialQuicWithLocalIP(ctx context.Context, server string, tlsCfg *tls.Config, quicCfg *quic.Config, localIP string) (*quic.Conn, error) {
+	bindAddr := common.BuildUDPBindAddr(localIP)
+	if bindAddr == nil {
+		return quic.DialAddr(ctx, server, tlsCfg, quicCfg)
+	}
+	rAddr, err := net.ResolveUDPAddr("udp", server)
+	if err != nil {
+		return nil, err
+	}
+	packetConn, err := net.ListenUDP("udp", bindAddr)
+	if err != nil {
+		return nil, err
+	}
+	sess, err := quic.Dial(ctx, packetConn, rAddr, tlsCfg, quicCfg)
+	if err != nil {
+		_ = packetConn.Close()
+		return nil, err
+	}
+	return sess, nil
 }

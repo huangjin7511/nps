@@ -400,7 +400,7 @@ func NewConn(tp string, vkey string, server string, proxyUrl string, localIP str
 			NextProtos:         []string{alpn},
 		}
 		ctx := context.Background()
-		sess, err := dialQuicWithLocalIP(ctx, server, tlsCfg, QuicConfig, localIP)
+		sess, err := conn.DialQuicWithLocalIP(ctx, server, tlsCfg, QuicConfig, localIP)
 		if err != nil {
 			return nil, "", fmt.Errorf("quic dial error: %w", err)
 		}
@@ -688,27 +688,6 @@ func NewHttpProxyConn(proxyURL *url.URL, remoteAddr string, timeout time.Duratio
 		return nil, errors.New("proxy CONNECT failed: " + resp.Status)
 	}
 	return proxyConn, nil
-}
-
-func dialQuicWithLocalIP(ctx context.Context, server string, tlsCfg *tls.Config, quicCfg *quic.Config, localIP string) (*quic.Conn, error) {
-	bindAddr := common.BuildUDPBindAddr(localIP)
-	if bindAddr == nil {
-		return quic.DialAddr(ctx, server, tlsCfg, quicCfg)
-	}
-	rAddr, err := net.ResolveUDPAddr("udp", server)
-	if err != nil {
-		return nil, err
-	}
-	packetConn, err := net.ListenUDP("udp", bindAddr)
-	if err != nil {
-		return nil, err
-	}
-	sess, err := quic.Dial(ctx, packetConn, rAddr, tlsCfg, quicCfg)
-	if err != nil {
-		_ = packetConn.Close()
-		return nil, err
-	}
-	return sess, nil
 }
 
 // get a basic auth string
