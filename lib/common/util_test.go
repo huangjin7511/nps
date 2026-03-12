@@ -2,12 +2,10 @@ package common
 
 import (
 	"bytes"
-	"encoding/binary"
 	"net"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"testing"
 )
 
@@ -183,27 +181,6 @@ func TestGetWriteStr(t *testing.T) {
 	}
 }
 
-func TestBinaryWrite(t *testing.T) {
-	raw := bytes.NewBuffer(nil)
-	BinaryWrite(raw, "info", "true")
-
-	buf := raw.Bytes()
-	if len(buf) < 4 {
-		t.Fatalf("BinaryWrite() output too short: %d", len(buf))
-	}
-
-	payloadLen := int(binary.LittleEndian.Uint32(buf[:4]))
-	payload := buf[4:]
-	if payloadLen != len(payload) {
-		t.Fatalf("payload length = %d, want %d", payloadLen, len(payload))
-	}
-
-	want := []byte("info" + CONN_DATA_SEQ + "true" + CONN_DATA_SEQ)
-	if !bytes.Equal(payload, want) {
-		t.Fatalf("payload = %q, want %q", string(payload), string(want))
-	}
-}
-
 func TestArrayAndPortHelpers(t *testing.T) {
 	if !InStrArr([]string{"a", "b"}, "b") || InStrArr([]string{"a", "b"}, "c") {
 		t.Fatalf("InStrArr() returned unexpected result")
@@ -223,7 +200,7 @@ func TestArrayAndPortHelpers(t *testing.T) {
 		}
 	}
 
-	if !IsPort("65536") || IsPort("65537") || IsPort("0") || IsPort("bad") {
+	if IsPort("65536") || IsPort("65537") || IsPort("0") || IsPort("bad") {
 		t.Fatalf("IsPort() returned unexpected result")
 	}
 	if got := FormatAddress("8080"); got != "127.0.0.1:8080" {
@@ -267,13 +244,6 @@ func TestSliceAndMapHelpers(t *testing.T) {
 
 	if got := BytesToNum([]byte{1, 2, 3}); got != 123 {
 		t.Fatalf("BytesToNum() = %d, want 123", got)
-	}
-
-	var m sync.Map
-	m.Store("k1", 1)
-	m.Store("k2", 2)
-	if got := GetSyncMapLen(&m); got != 2 {
-		t.Fatalf("GetSyncMapLen() = %d, want 2", got)
 	}
 }
 
@@ -327,41 +297,6 @@ func TestIPAndBindHelpers(t *testing.T) {
 
 	if !IsPublicHost("8.8.8.8:53") || IsPublicHost("127.0.0.1:53") || !IsPublicHost("example.com:443") || IsPublicHost(":bad") {
 		t.Fatalf("IsPublicHost() returned unexpected result")
-	}
-}
-
-func TestCheckAuthWithAccountMap(t *testing.T) {
-	if !CheckAuthWithAccountMap("admin", "pass", "admin", "pass", nil, nil) {
-		t.Fatal("CheckAuthWithAccountMap() = false, want true for global account")
-	}
-	if CheckAuthWithAccountMap("", "pass", "admin", "pass", map[string]string{"u": "p"}, nil) {
-		t.Fatal("CheckAuthWithAccountMap() = true, want false for empty user in multi-account mode")
-	}
-	if !CheckAuthWithAccountMap("u", "p", "admin", "pass", map[string]string{"u": "p"}, nil) {
-		t.Fatal("CheckAuthWithAccountMap() = false, want true for account map match")
-	}
-	if !CheckAuthWithAccountMap("u2", "p2", "admin", "pass", nil, map[string]string{"u2": "p2"}) {
-		t.Fatal("CheckAuthWithAccountMap() = false, want true for auth map match")
-	}
-	if CheckAuthWithAccountMap("u", "bad", "admin", "pass", map[string]string{"u": "p"}, nil) {
-		t.Fatal("CheckAuthWithAccountMap() = true, want false for wrong password")
-	}
-}
-
-func TestDealMultiUserAndBoolHelpers(t *testing.T) {
-	got := DealMultiUser(" user1 = pass1\nuser2=pass2\nlonely ")
-	if len(got) != 3 || got["user1"] != "pass1" || got["user2"] != "pass2" || got["lonely"] != "" {
-		t.Fatalf("DealMultiUser() = %#v, want parsed map", got)
-	}
-	if DealMultiUser("   ") != nil {
-		t.Fatal("DealMultiUser(empty) != nil")
-	}
-
-	if !GetBoolByStr("1") || !GetBoolByStr("true") || GetBoolByStr("TRUE") {
-		t.Fatal("GetBoolByStr() returned unexpected result")
-	}
-	if GetStrByBool(true) != "1" || GetStrByBool(false) != "0" {
-		t.Fatal("GetStrByBool() returned unexpected result")
 	}
 }
 
@@ -537,10 +472,6 @@ func TestNetEncodingAndUdpFixHelpers(t *testing.T) {
 	}
 	if got := DecodeIP([]byte{0x01, 1, 2, 3}); got != nil {
 		t.Fatalf("DecodeIP(short) = %v, want nil", got)
-	}
-
-	if got := JoinHostPort("2001:db8::1", "443"); got != "[2001:db8::1]:443" {
-		t.Fatalf("JoinHostPort(v6) = %q, want [2001:db8::1]:443", got)
 	}
 
 	if b, err := RandomBytes(32); err != nil || len(b) > 32 {

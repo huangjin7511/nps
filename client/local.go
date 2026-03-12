@@ -500,18 +500,18 @@ func (mgr *P2PManager) handleUdpMonitor(cfg *config.CommonConfig, l *config.Loca
 		}
 		mgr.mu.Unlock()
 
-		tmpConnV4, errV4 := common.GetLocalUdp4Addr()
+		addrV4, errV4 := common.GetLocalUdp4Addr()
 		if errV4 != nil {
 			logs.Warn("Failed to get local IPv4 address: %v", errV4)
 		} else {
-			logs.Debug("IPv4 address: %v", tmpConnV4.LocalAddr())
+			logs.Debug("IPv4 address: %v", addrV4)
 		}
 
-		tmpConnV6, errV6 := common.GetLocalUdp6Addr()
+		addrV6, errV6 := common.GetLocalUdp6Addr()
 		if errV6 != nil {
 			logs.Warn("Failed to get local IPv6 address: %v", errV6)
 		} else {
-			logs.Debug("IPv6 address: %v", tmpConnV6.LocalAddr())
+			logs.Debug("IPv6 address: %v", addrV6)
 		}
 
 		if errV4 != nil && errV6 != nil {
@@ -534,7 +534,7 @@ func (mgr *P2PManager) handleUdpMonitor(cfg *config.CommonConfig, l *config.Loca
 			default:
 			}
 			if errV4 == nil {
-				mgr.newUdpConn(tmpConnV4.LocalAddr().String(), cfg, l)
+				mgr.newUdpConn(addrV4.String(), cfg, l)
 				mgr.mu.Lock()
 				if mgr.statusOK {
 					mgr.mu.Unlock()
@@ -544,7 +544,7 @@ func (mgr *P2PManager) handleUdpMonitor(cfg *config.CommonConfig, l *config.Loca
 				notReadyRetry++
 			}
 			if errV6 == nil {
-				mgr.newUdpConn(tmpConnV6.LocalAddr().String(), cfg, l)
+				mgr.newUdpConn(addrV6.String(), cfg, l)
 				mgr.mu.Lock()
 				if mgr.statusOK {
 					mgr.mu.Unlock()

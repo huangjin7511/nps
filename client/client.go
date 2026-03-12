@@ -169,19 +169,19 @@ func (s *TRPClient) handleMain() {
 				}
 				var localAddr string
 				if strings.Contains(rAddr, "]:") {
-					tmpConn, err := common.GetLocalUdp6Addr()
+					addr6, err := common.GetLocalUdp6Addr()
 					if err != nil {
 						logs.Error("%v", err)
 						return
 					}
-					localAddr = tmpConn.LocalAddr().String()
+					localAddr = addr6.String()
 				} else {
-					tmpConn, err := common.GetLocalUdp4Addr()
+					addr4, err := common.GetLocalUdp4Addr()
 					if err != nil {
 						logs.Error("%v", err)
 						return
 					}
-					localAddr = tmpConn.LocalAddr().String()
+					localAddr = addr4.String()
 				}
 				if !DisableP2P {
 					go s.newUdpConn(localAddr, rAddr, string(pwd))

@@ -2,14 +2,13 @@ package conn
 
 import (
 	"bytes"
+	"crypto/tls"
 	"encoding/binary"
 	"errors"
 	"io"
 	"net"
 	"testing"
 	"time"
-
-	"crypto/tls"
 
 	"github.com/djylb/nps/lib/crypt"
 )

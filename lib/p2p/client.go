@@ -251,23 +251,19 @@ func buildP2PLocalStr(port string) string {
 	}
 	out := make([]string, 0, 2)
 
-	tmpConnV4, errV4 := common.GetLocalUdp4Addr()
-	if errV4 == nil && tmpConnV4 != nil {
-		if la, ok := tmpConnV4.LocalAddr().(*net.UDPAddr); ok && la != nil && la.IP != nil && !common.IsZeroIP(la.IP) {
-			a := net.JoinHostPort(la.IP.String(), port)
-			if a != "" && !common.InStrArr(out, a) {
-				out = append(out, a)
-			}
+	ipV4, errV4 := common.GetLocalUdp4IP()
+	if errV4 == nil && ipV4 != nil && !common.IsZeroIP(ipV4) {
+		a := net.JoinHostPort(ipV4.String(), port)
+		if a != "" && !common.InStrArr(out, a) {
+			out = append(out, a)
 		}
 	}
 
-	tmpConnV6, errV6 := common.GetLocalUdp6Addr()
-	if errV6 == nil && tmpConnV6 != nil {
-		if la, ok := tmpConnV6.LocalAddr().(*net.UDPAddr); ok && la != nil && la.IP != nil && !common.IsZeroIP(la.IP) {
-			a := net.JoinHostPort(la.IP.String(), port)
-			if a != "" && !common.InStrArr(out, a) {
-				out = append(out, a)
-			}
+	ipV6, errV6 := common.GetLocalUdp6IP()
+	if errV6 == nil && ipV6 != nil && !common.IsZeroIP(ipV6) {
+		a := net.JoinHostPort(ipV6.String(), port)
+		if a != "" && !common.InStrArr(out, a) {
+			out = append(out, a)
 		}
 	}
 

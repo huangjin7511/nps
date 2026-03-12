@@ -2,18 +2,11 @@ package common
 
 import (
 	"bytes"
-	"crypto/tls"
-	"encoding/base64"
 	"encoding/binary"
 	"html/template"
-	"io"
 	"math"
 	"net"
-	"net/http"
-	"net/url"
 	"os"
-	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,161 +16,6 @@ import (
 	"github.com/araddon/dateparse"
 	"github.com/djylb/nps/lib/logs"
 )
-
-var (
-	domainCheckWithPathRegexp = regexp.MustCompile(`^((http://)|(https://))?([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,6}(/)`)
-	domainCheckRegexp         = regexp.MustCompile(`^((http://)|(https://))?([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,6}`)
-)
-
-func ExtractHost(input string) string {
-	if strings.Contains(input, "://") {
-		if u, err := url.Parse(input); err == nil && u.Host != "" {
-			return u.Host
-		}
-	}
-	if idx := strings.IndexByte(input, '/'); idx != -1 {
-		input = input[:idx]
-	}
-	return input
-}
-
-func RemovePortFromHost(host string) string {
-	if len(host) == 0 {
-		return host
-	}
-	var idx int
-	if host[0] == '[' {
-		if idx = strings.IndexByte(host, ']'); idx != -1 {
-			return host[:idx+1]
-		}
-		return ""
-	}
-	if idx = strings.LastIndexByte(host, ':'); idx != -1 && idx == strings.IndexByte(host, ':') {
-		return host[:idx]
-	}
-	return host
-}
-
-func GetIpByAddr(host string) string {
-	if len(host) == 0 {
-		return host
-	}
-	var idx int
-	if host[0] == '[' {
-		if idx = strings.IndexByte(host, ']'); idx != -1 {
-			return host[1:idx]
-		}
-		return ""
-	}
-	if idx = strings.LastIndexByte(host, ':'); idx != -1 && idx == strings.IndexByte(host, ':') {
-		return host[:idx]
-	}
-	return host
-}
-
-func IsDomain(s string) bool { return net.ParseIP(s) == nil }
-
-func GetPortByAddr(addr string) int {
-	if len(addr) == 0 {
-		return 0
-	}
-	if addr[0] == '[' {
-		if end := strings.IndexByte(addr, ']'); end != -1 && end+1 < len(addr) && addr[end+1] == ':' {
-			portStr := addr[end+2:]
-			if port, err := strconv.Atoi(portStr); err == nil && port > 0 && port <= 65535 {
-				return port
-			}
-		}
-		return 0
-	}
-	if idx := strings.LastIndexByte(addr, ':'); idx != -1 {
-		portStr := addr[idx+1:]
-		if port, err := strconv.Atoi(portStr); err == nil && port > 0 && port <= 65535 {
-			return port
-		}
-	}
-	return 0
-}
-
-func GetPortStrByAddr(addr string) string {
-	port := GetPortByAddr(addr)
-	if port == 0 {
-		return ""
-	}
-	return strconv.Itoa(port)
-}
-
-func ValidateAddr(s string) string {
-	host, port, err := net.SplitHostPort(s)
-	if err != nil {
-		return ""
-	}
-	if ip := net.ParseIP(host); ip == nil {
-		return ""
-	}
-	p, err := strconv.Atoi(port)
-	if err != nil || p < 1 || p > 65535 {
-		return ""
-	}
-	return s
-}
-
-func BuildAddress(host string, port string) string {
-	if strings.Contains(host, ":") {
-		return "[" + host + "]:" + port
-	}
-	return host + ":" + port
-}
-
-func SplitServerAndPath(s string) (server, path string) {
-	index := strings.Index(s, "/")
-	if index == -1 {
-		return s, ""
-	}
-	return s[:index], s[index:]
-}
-
-func SplitAddrAndHost(s string) (addr, host, sni string) {
-	s = strings.TrimSpace(s)
-	index := strings.Index(s, "@")
-	if index == -1 {
-		return s, s, GetSni(s)
-	}
-	addr = strings.TrimSpace(s[:index])
-	host = strings.TrimSpace(s[index+1:])
-	if host == "" {
-		return addr, addr, ""
-	}
-	return addr, host, GetSni(host)
-}
-
-func GetSni(host string) string {
-	sni := GetIpByAddr(host)
-	if !IsDomain(sni) {
-		sni = ""
-	}
-	return sni
-}
-
-func GetHostByName(hostname string) string {
-	if !DomainCheck(hostname) {
-		return hostname
-	}
-	ips, err := net.LookupIP(hostname)
-	if err != nil {
-		return ""
-	}
-	for _, v := range ips {
-		if v.To4() != nil || v.To16() != nil {
-			return v.String()
-		}
-	}
-	return ""
-}
-
-func DomainCheck(domain string) bool {
-	return domainCheckWithPathRegexp.MatchString(domain) || domainCheckRegexp.MatchString(domain)
-}
 
 func Max(values ...int) int {
 	maxVal := math.MinInt
@@ -199,84 +37,16 @@ func Min(values ...int) int {
 	return minVal
 }
 
-func GetPort(value int) int {
-	if value >= 0 {
-		return value % 65536
-	}
-	return (65536 + value%65536) % 65536
-}
-
-func CheckAuthWithAccountMap(u, p, user, passwd string, accountMap, authMap map[string]string) bool {
-	noAccountMap := len(accountMap) == 0
-	noAuthMap := len(authMap) == 0
-	if noAccountMap && noAuthMap {
-		return u == user && p == passwd
-	}
-	if len(u) == 0 {
-		return false
-	}
-	if u == user && p == passwd {
+// GetBoolByStr get bool by str
+func GetBoolByStr(s string) bool {
+	switch s {
+	case "1", "true":
 		return true
-	}
-	if !noAccountMap {
-		if P, ok := accountMap[u]; ok && p == P {
-			return true
-		}
-	}
-	if !noAuthMap {
-		if P, ok := authMap[u]; ok && p == P {
-			return true
-		}
 	}
 	return false
 }
 
-func CheckAuth(r *http.Request, user, passwd string, accountMap, authMap map[string]string) bool {
-	if user == "" && passwd == "" && len(accountMap) == 0 && len(authMap) == 0 {
-		return true
-	}
-	s := strings.SplitN(r.Header.Get("Authorization"), " ", 2)
-	if len(s) != 2 {
-		s = strings.SplitN(r.Header.Get("Proxy-Authorization"), " ", 2)
-		if len(s) != 2 {
-			return false
-		}
-	}
-	b, err := base64.StdEncoding.DecodeString(s[1])
-	if err != nil {
-		return false
-	}
-	pair := strings.SplitN(string(b), ":", 2)
-	if len(pair) != 2 {
-		return false
-	}
-	return CheckAuthWithAccountMap(pair[0], pair[1], user, passwd, accountMap, authMap)
-}
-
-func DealMultiUser(s string) map[string]string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil
-	}
-	s = strings.ReplaceAll(s, "\r\n", "\n")
-	multiUserMap := make(map[string]string)
-	for _, v := range strings.Split(s, "\n") {
-		if strings.TrimSpace(v) == "" {
-			continue
-		}
-		item := strings.SplitN(v, "=", 2)
-		if len(item) == 0 {
-			continue
-		} else if len(item) == 1 {
-			item = append(item, "")
-		}
-		multiUserMap[strings.TrimSpace(item[0])] = strings.TrimSpace(item[1])
-	}
-	return multiUserMap
-}
-
-func GetBoolByStr(s string) bool { return s == "1" || s == "true" }
-
+// GetStrByBool get str by bool
 func GetStrByBool(b bool) string {
 	if b {
 		return "1"
@@ -284,11 +54,13 @@ func GetStrByBool(b bool) string {
 	return "0"
 }
 
+// GetIntNoErrByStr int
 func GetIntNoErrByStr(str string) int {
 	i, _ := strconv.Atoi(strings.TrimSpace(str))
 	return i
 }
 
+// GetTimeNoErrByStr time
 func GetTimeNoErrByStr(str string) time.Time {
 	str = strings.TrimSpace(str)
 	if str == "" {
@@ -311,90 +83,17 @@ func ContainsFold(s, substr string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
 }
 
-func ReadAllFromFile(filePath string) ([]byte, error) {
-	f, err := os.Open(filePath)
-	if err != nil {
-		return nil, err
+// BytesToNum convert bytes to num
+func BytesToNum(b []byte) int {
+	var str string
+	for i := 0; i < len(b); i++ {
+		str += strconv.Itoa(int(b[i]))
 	}
-	defer func() { _ = f.Close() }()
-	return io.ReadAll(f)
+	x, _ := strconv.Atoi(str)
+	return x
 }
 
-func GetPath(filePath string) string {
-	if !filepath.IsAbs(filePath) {
-		filePath = filepath.Join(GetRunPath(), filePath)
-	}
-	path, err := filepath.Abs(filePath)
-	if err != nil {
-		return filePath
-	}
-	return path
-}
-
-func GetCertContent(filePath, header string) (string, error) {
-	if filePath == "" || strings.Contains(filePath, header) {
-		return filePath, nil
-	}
-	if !filepath.IsAbs(filePath) {
-		filePath = filepath.Join(GetRunPath(), filePath)
-	}
-	content, err := ReadAllFromFile(filePath)
-	if err != nil || !strings.Contains(string(content), header) {
-		return "", err
-	}
-	return string(content), nil
-}
-
-func LoadCertPair(certFile, keyFile string) (certContent, keyContent string, ok bool) {
-	var wg sync.WaitGroup
-	var certErr, keyErr error
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		certContent, certErr = GetCertContent(certFile, "CERTIFICATE")
-	}()
-	go func() {
-		defer wg.Done()
-		keyContent, keyErr = GetCertContent(keyFile, "PRIVATE")
-	}()
-	wg.Wait()
-	if certErr != nil || keyErr != nil || certContent == "" || keyContent == "" {
-		return "", "", false
-	}
-	return certContent, keyContent, true
-}
-
-func LoadCert(certFile, keyFile string) (tls.Certificate, bool) {
-	certContent, keyContent, ok := LoadCertPair(certFile, keyFile)
-	if ok {
-		certificate, err := tls.X509KeyPair([]byte(certContent), []byte(keyContent))
-		if err == nil {
-			return certificate, true
-		}
-	}
-	return tls.Certificate{}, false
-}
-
-func GetCertType(s string) string {
-	if s == "" {
-		return "empty"
-	}
-	if strings.Contains(s, "-----BEGIN ") || strings.Contains(s, "\n") {
-		return "text"
-	}
-	if _, err := os.Stat(s); err == nil {
-		return "file"
-	}
-	return "invalid"
-}
-
-func FileExists(name string) bool {
-	if _, err := os.Stat(name); err != nil && os.IsNotExist(err) {
-		return false
-	}
-	return true
-}
-
+// TestTcpPort Judge whether the TCP port can open normally
 func TestTcpPort(port int) bool {
 	l, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.ParseIP("0.0.0.0"), Port: port})
 	defer func() {
@@ -405,6 +104,7 @@ func TestTcpPort(port int) bool {
 	return err == nil
 }
 
+// TestUdpPort Judge whether the UDP port can open normally
 func TestUdpPort(port int) bool {
 	l, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("0.0.0.0"), Port: port})
 	defer func() {
@@ -415,6 +115,9 @@ func TestUdpPort(port int) bool {
 	return err == nil
 }
 
+// BinaryWrite Write length and individual byte data
+// Length prevents sticking
+// # Characters are used to separate data
 func BinaryWrite(raw *bytes.Buffer, v ...string) {
 	b := GetWriteStr(v...)
 	var lenBuf [4]byte
@@ -423,6 +126,7 @@ func BinaryWrite(raw *bytes.Buffer, v ...string) {
 	_, _ = raw.Write(b)
 }
 
+// GetWriteStr get seq str
 func GetWriteStr(v ...string) []byte {
 	sep := CONN_DATA_SEQ
 	sepLen := len(sep)
@@ -438,6 +142,7 @@ func GetWriteStr(v ...string) []byte {
 	return buffer
 }
 
+// InStrArr inArray str interface
 func InStrArr(arr []string, val string) bool {
 	for _, v := range arr {
 		if v == val {
@@ -447,6 +152,7 @@ func InStrArr(arr []string, val string) bool {
 	return false
 }
 
+// InIntArr inArray int interface
 func InIntArr(arr []int, val int) bool {
 	for _, v := range arr {
 		if v == val {
@@ -454,61 +160,6 @@ func InIntArr(arr []int, val int) bool {
 		}
 	}
 	return false
-}
-
-func GetPorts(s string) []int {
-	if strings.TrimSpace(s) == "" {
-		return nil
-	}
-	seen := make(map[int]struct{})
-	for _, item := range strings.Split(s, ",") {
-		item = strings.TrimSpace(item)
-		if item == "" {
-			continue
-		}
-		if fw := strings.SplitN(item, "-", 2); len(fw) == 2 {
-			a, b := strings.TrimSpace(fw[0]), strings.TrimSpace(fw[1])
-			if IsPort(a) && IsPort(b) {
-				start, _ := strconv.Atoi(a)
-				end, _ := strconv.Atoi(b)
-				if end < start {
-					start, end = end, start
-				}
-				for i := start; i <= end; i++ {
-					seen[i] = struct{}{}
-				}
-			}
-			continue
-		}
-		if IsPort(item) {
-			port, _ := strconv.Atoi(item)
-			seen[port] = struct{}{}
-		}
-	}
-	if len(seen) == 0 {
-		return nil
-	}
-	ps := make([]int, 0, len(seen))
-	for p := range seen {
-		ps = append(ps, p)
-	}
-	sort.Ints(ps)
-	return ps
-}
-
-func IsPort(p string) bool {
-	pi, err := strconv.Atoi(p)
-	if err != nil {
-		return false
-	}
-	return pi <= 65536 && pi >= 1
-}
-
-func FormatAddress(s string) string {
-	if strings.Contains(s, ":") {
-		return s
-	}
-	return "127.0.0.1:" + s
 }
 
 func in(target string, strArray []string) bool {
@@ -526,57 +177,7 @@ func IsBlackIp(ipPort, vkey string, blackIpList []string) bool {
 	return false
 }
 
-func CopyBuffer(dst io.Writer, src io.Reader, label ...string) (written int64, err error) {
-	buf := BufPoolCopy.Get()
-	defer BufPoolCopy.Put(buf)
-	for {
-		nr, er := src.Read(buf)
-		if nr > 0 {
-			nw, ew := dst.Write(buf[0:nr])
-			if nw > 0 {
-				written += int64(nw)
-			}
-			if ew != nil {
-				err = ew
-				break
-			}
-			if nr != nw {
-				err = io.ErrShortWrite
-				break
-			}
-		}
-		if er != nil {
-			err = er
-			break
-		}
-	}
-	return written, err
-}
-
-func GetLocalUdpAddr() (net.Conn, error) {
-	tmpConn, err := net.Dial("udp", GetCustomDNS())
-	if err != nil {
-		return nil, err
-	}
-	return tmpConn, tmpConn.Close()
-}
-
-func GetLocalUdp4Addr() (net.Conn, error) {
-	tmpConn, err := net.Dial("udp4", IPv4DNS)
-	if err != nil {
-		return nil, err
-	}
-	return tmpConn, tmpConn.Close()
-}
-
-func GetLocalUdp6Addr() (net.Conn, error) {
-	tmpConn, err := net.Dial("udp6", IPv6DNS)
-	if err != nil {
-		return nil, err
-	}
-	return tmpConn, tmpConn.Close()
-}
-
+// ParseStr parse template
 func ParseStr(str string) (string, error) {
 	tmp := template.New("npc")
 	w := new(bytes.Buffer)
@@ -590,10 +191,12 @@ func ParseStr(str string) (string, error) {
 	return w.String(), nil
 }
 
+// GetEnvMap get env
 func GetEnvMap() map[string]string {
 	m := make(map[string]string)
-	for _, kv := range os.Environ() {
-		tmp := strings.Split(kv, "=")
+	environ := os.Environ()
+	for i := range environ {
+		tmp := strings.Split(environ[i], "=")
 		if len(tmp) == 2 {
 			m[tmp[0]] = tmp[1]
 		}
@@ -601,6 +204,7 @@ func GetEnvMap() map[string]string {
 	return m
 }
 
+// TrimArr throw the empty element of the string array
 func TrimArr(arr []string) []string {
 	newArr := make([]string, 0)
 	for _, v := range arr {
@@ -624,6 +228,7 @@ func IsArrContains(arr []string, val string) bool {
 	return false
 }
 
+// RemoveArrVal remove value from string array
 func RemoveArrVal(arr []string, val string) []string {
 	for k, v := range arr {
 		if v == val {
@@ -666,4 +271,14 @@ func ExtendArrs(arrays ...*[]string) int {
 		}
 	}
 	return maxLength
+}
+
+// GetSyncMapLen get the length of the sync map
+func GetSyncMapLen(m *sync.Map) int {
+	var c int
+	m.Range(func(key, value interface{}) bool {
+		c++
+		return true
+	})
+	return c
 }
