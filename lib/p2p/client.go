@@ -52,6 +52,7 @@ func HandleUDP(
 			logs.Error("[P2P] getRemoteAddressFromServer seq=%d err=%v", seq, err)
 			return
 		}
+		time.Sleep(10 * time.Millisecond)
 	}
 
 	var peerExt1, peerExt2, peerExt3 string

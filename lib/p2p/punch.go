@@ -173,8 +173,11 @@ func sendP2PTestMsg(
 			connList = append(connList, extra...)
 		}
 		startTickerSender(500*time.Millisecond, func() {
-			for _, c := range connList {
+			for i, c := range connList {
 				_, _ = c.WriteTo(bConnect, baseUDP)
+				if i > 0 && i%40 == 0 {
+					time.Sleep(2 * time.Millisecond)
+				}
 			}
 		})
 	} else if selfHard && baseUDP != nil {
@@ -184,8 +187,11 @@ func sendP2PTestMsg(
 			connList = append(connList, extra...)
 		}
 		startTickerSender(600*time.Millisecond, func() {
-			for _, c := range connList {
+			for i, c := range connList {
 				_, _ = c.WriteTo(bConnect, baseUDP)
+				if i > 0 && i%40 == 0 {
+					time.Sleep(2 * time.Millisecond)
+				}
 			}
 		})
 	}
@@ -239,8 +245,23 @@ func sendP2PTestMsg(
 			if ip == "" {
 				return
 			}
-			ports := getRandomUniquePorts(1000, 1, 65535)
-			udpAddrs := make([]*net.UDPAddr, 0, len(ports))
+
+			var udpAddrs []*net.UDPAddr
+			predPort := common.GetPortByAddr(predictedStr)
+
+			if predPort > 0 {
+				minP := common.Max(1, predPort-300)
+				maxP := common.Min(65535, predPort+300)
+				nearPorts := getRandomUniquePorts(150, minP, maxP)
+				for _, p := range nearPorts {
+					ra, e := net.ResolveUDPAddr("udp", net.JoinHostPort(ip, strconv.Itoa(p)))
+					if e == nil && ra != nil {
+						udpAddrs = append(udpAddrs, ra)
+					}
+				}
+			}
+
+			ports := getRandomUniquePorts(850, 1, 65535)
 			for _, p := range ports {
 				ra, e := net.ResolveUDPAddr("udp", net.JoinHostPort(ip, strconv.Itoa(p)))
 				if e == nil && ra != nil {
@@ -248,11 +269,18 @@ func sendP2PTestMsg(
 				}
 			}
 
-			for _, ra := range udpAddrs {
-				_, _ = localConn.WriteTo(bConnect, ra)
+			sendBatch := func() {
+				for i, ra := range udpAddrs {
+					_, _ = localConn.WriteTo(bConnect, ra)
+					if i > 0 && i%40 == 0 {
+						time.Sleep(5 * time.Millisecond)
+					}
+				}
 			}
 
-			ticker := time.NewTicker(2 * time.Second)
+			sendBatch()
+
+			ticker := time.NewTicker(1500 * time.Millisecond)
 			defer ticker.Stop()
 			for {
 				select {
@@ -262,9 +290,7 @@ func sendP2PTestMsg(
 					if atomic.LoadUint32(&closed) != 0 {
 						return
 					}
-					for _, ra := range udpAddrs {
-						_, _ = localConn.WriteTo(bConnect, ra)
-					}
+					sendBatch()
 				}
 			}
 		}()
