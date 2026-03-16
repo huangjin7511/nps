@@ -18,6 +18,20 @@ import (
 	"golang.org/x/net/ipv6"
 )
 
+func isIgnorableUDPIcmpError(err error) bool {
+	if err == nil {
+		return false
+	}
+	errStr := strings.ToLower(err.Error())
+	if strings.Contains(errStr, "connection refused") || strings.Contains(errStr, "connection reset by peer") {
+		return true
+	}
+	if strings.Contains(errStr, "wsarecvfrom") && (strings.Contains(errStr, "10054") || strings.Contains(errStr, "wsaeconnreset")) {
+		return true
+	}
+	return false
+}
+
 func getNextAddr(addr string, n int) (string, error) {
 	lastColonIndex := strings.LastIndex(addr, ":")
 	if lastColonIndex == -1 {
@@ -77,6 +91,67 @@ func getRandomUniquePorts(count, min, max int) []int {
 		out = append(out, p)
 	}
 	return out
+}
+
+func shouldRunFallbackRandomScan(allowAggressivePrediction, forceHard, portRestrictedByProbe bool) bool {
+	return allowAggressivePrediction || forceHard || portRestrictedByProbe
+}
+
+func pickPrimaryPunchTarget(exactTargets, predictionTargets []string, allowAggressivePrediction bool) string {
+	if allowAggressivePrediction && len(predictionTargets) > 0 {
+		return predictionTargets[0]
+	}
+	if len(exactTargets) > 0 {
+		return exactTargets[0]
+	}
+	if len(predictionTargets) > 0 {
+		return predictionTargets[0]
+	}
+	return ""
+}
+
+func buildPredictedPeerAddrs(peerExt1, peerExt2, peerExt3 string, interval int) []string {
+	if interval == 0 {
+		return nil
+	}
+	out := make([]string, 0, 6)
+	for _, base := range []string{peerExt3, peerExt2, peerExt1} {
+		if base == "" {
+			continue
+		}
+		if next, err := getNextAddr(base, interval); err == nil && next != "" {
+			out = append(out, next)
+		}
+		if prev, err := getNextAddr(base, -interval); err == nil && prev != "" {
+			out = append(out, prev)
+		}
+	}
+	return uniqAddrStrs(out...)
+}
+
+func buildSmallContiguousPorts(basePort, scanRange int) []int {
+	if basePort <= 0 || scanRange <= 0 {
+		return nil
+	}
+	out := make([]int, 0, scanRange*2+1)
+	for d := 0; d <= scanRange; d++ {
+		for _, p := range []int{basePort + d, basePort - d} {
+			if p < 1 || p > 65535 {
+				continue
+			}
+			out = append(out, p)
+		}
+	}
+	uniq := make([]int, 0, len(out))
+	seen := make(map[int]struct{}, len(out))
+	for _, p := range out {
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		uniq = append(uniq, p)
+	}
+	return uniq
 }
 
 func natHintByInterval(interval int, has bool) string {

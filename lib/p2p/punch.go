@@ -79,6 +79,8 @@ func sendP2PTestMsg(
 
 	peerRegular := isRegularStep(peerInterval, hasPeerExt)
 	selfHard := hasSelfExt && selfInterval != 0
+	allowAggressivePrediction := hasPeerExt && hasSelfExt && peerInterval != 0 && selfInterval != 0
+	allowConservativePrediction := hasPeerExt && peerInterval != 0
 	if forceHard {
 		selfHard = true
 	}
@@ -86,25 +88,21 @@ func sendP2PTestMsg(
 		selfHard = true
 	}
 
-	logs.Info("[P2P] nat peer=%s(%d,%v) self=%s(%d) peerLocal=%v forceHard=%v probePortRestricted=%v",
+	logs.Info("[P2P] nat peer=%s(%d,%v) self=%s(%d) peerLocal=%v forceHard=%v probePortRestricted=%v allowAggressivePrediction=%v allowConservativePrediction=%v",
 		natHintByInterval(peerInterval, hasPeerExt), peerInterval, peerRegular,
 		natHintByInterval(selfInterval, hasSelfExt), selfInterval,
-		peerLocal != "", forceHard, portRestrictedByProbe)
+		peerLocal != "", forceHard, portRestrictedByProbe, allowAggressivePrediction, allowConservativePrediction)
 
-	predictedStr := ""
-	if peerExt3 != "" {
-		predictedStr = peerExt3
-	} else if peerExt2 != "" {
-		predictedStr = peerExt2
-	} else if peerExt1 != "" {
-		predictedStr = peerExt1
+	exactTargets := uniqAddrStrs(peerExt3, peerExt2, peerExt1)
+	predictionTargets := buildPredictedPeerAddrs(peerExt1, peerExt2, peerExt3, peerInterval)
+	baseAddrStr := pickPrimaryPunchTarget(exactTargets, predictionTargets, allowAggressivePrediction)
+	targets := append([]string{}, exactTargets...)
+	if allowAggressivePrediction {
+		targets = uniqAddrStrs(append(append([]string{}, predictionTargets...), exactTargets...)...)
+	} else if allowConservativePrediction && len(predictionTargets) > 0 {
+		// keep exact endpoint as primary in NAT3/unknown cases; add only a tiny prediction probe set
+		targets = uniqAddrStrs(append(targets, predictionTargets[0])...)
 	}
-	if predictedStr != "" && hasPeerExt {
-		if s, e := getNextAddr(peerExt3, peerInterval); e == nil && s != "" {
-			predictedStr = s
-		}
-	}
-	targets := uniqAddrStrs(predictedStr, peerExt1, peerExt2, peerExt3)
 
 	var peerLocalUDP *net.UDPAddr
 	if peerLocal != "" {
@@ -134,7 +132,7 @@ func sendP2PTestMsg(
 		}()
 	}
 
-	baseUDP := resolveUDPAddr(predictedStr)
+	baseUDP := resolveUDPAddr(baseAddrStr)
 	if peerLocalUDP != nil {
 		go func(remoteUDP *net.UDPAddr) {
 			for i := 20; i > 0; i-- {
@@ -156,21 +154,56 @@ func sendP2PTestMsg(
 		logs.Debug("[P2P] start low-ttl warmup target=%s forceHard=%v probePortRestricted=%v", baseUDP.String(), forceHard, portRestrictedByProbe)
 		startPortRestrictedWarmup(parentCtx, &closed, localConn, baseUDP)
 	}
-	if len(targets) > 0 {
+	targetUDPAddrs := make([]*net.UDPAddr, 0, len(targets))
+	for _, t := range targets {
+		ua := resolveUDPAddr(t)
+		if ua != nil {
+			targetUDPAddrs = append(targetUDPAddrs, ua)
+		}
+	}
+	if len(targetUDPAddrs) > 0 {
 		go func() {
-			for _, t := range targets {
-				ua := resolveUDPAddr(t)
-				if ua == nil {
-					continue
-				}
+			for _, ua := range targetUDPAddrs {
 				_ = sendBurstWithGap(localConn, bConnect, ua, p2pConeBurstCount, p2pConeBurstGap)
 			}
 		}()
+		if len(targetUDPAddrs) > 1 {
+			startTickerSender(p2pConeMultiSendTick, func() {
+				for _, ua := range targetUDPAddrs {
+					_, _ = localConn.WriteTo(bConnect, ua)
+				}
+			})
+		}
 	}
 	if baseUDP != nil {
 		startTickerSender(p2pConeSendTick, func() {
 			_, _ = localConn.WriteTo(bConnect, baseUDP)
 		})
+	}
+
+	if allowConservativePrediction && !allowAggressivePrediction && baseUDP != nil {
+		ip := hostOnly(baseUDP.String())
+		basePort := common.GetPortByAddr(baseUDP.String())
+		contigPorts := buildSmallContiguousPorts(basePort, p2pConeSmallContigRange)
+		contigAddrs := make([]*net.UDPAddr, 0, len(contigPorts))
+		for _, p := range contigPorts {
+			ua, e := net.ResolveUDPAddr("udp", net.JoinHostPort(ip, strconv.Itoa(p)))
+			if e == nil && ua != nil {
+				contigAddrs = append(contigAddrs, ua)
+			}
+		}
+		if len(contigAddrs) > 0 {
+			go func() {
+				for _, ua := range contigAddrs {
+					_, _ = localConn.WriteTo(bConnect, ua)
+				}
+			}()
+			startTickerSender(p2pConeSmallContigSendTick, func() {
+				for _, ua := range contigAddrs {
+					_, _ = localConn.WriteTo(bConnect, ua)
+				}
+			})
+		}
 	}
 
 	isStrategyA := hasPeerExt && hasSelfExt && peerInterval == 0 && selfInterval != 0 && baseUDP != nil
@@ -204,7 +237,7 @@ func sendP2PTestMsg(
 		})
 	}
 
-	if baseUDP != nil && peerRegular {
+	if allowAggressivePrediction && baseUDP != nil && peerRegular {
 		ip := hostOnly(peerExt2)
 		if ip == "" {
 			ip = hostOnly(peerExt3)
@@ -244,18 +277,31 @@ func sendP2PTestMsg(
 	if forceHard {
 		fallbackDelay = 0
 	}
-	startFallbackRandomScan(parentCtx, &closed, localConn, peerExt1, peerExt2, peerExt3, fallbackDelay)
+	if shouldRunFallbackRandomScan(allowAggressivePrediction, forceHard, portRestrictedByProbe) {
+		startFallbackRandomScan(parentCtx, &closed, localConn, peerExt1, peerExt2, peerExt3, fallbackDelay)
+	}
 
 	if hasPeerExt && hasSelfExt && peerInterval != 0 && selfInterval == 0 {
 		logs.Debug("[P2P] strategy=B peer hard-ish, self easy-ish => broad random scan")
 		go func() {
 			ip := hostOnly(peerExt2)
 			if ip == "" {
+				ip = hostOnly(peerExt3)
+			}
+			if ip == "" {
+				ip = hostOnly(peerExt1)
+			}
+			if ip == "" {
 				return
 			}
 
 			var udpAddrs []*net.UDPAddr
-			predPort := common.GetPortByAddr(predictedStr)
+			predPort := common.GetPortByAddr(baseAddrStr)
+			if len(predictionTargets) > 0 {
+				if pp := common.GetPortByAddr(predictionTargets[0]); pp > 0 {
+					predPort = pp
+				}
+			}
 
 			if predPort > 0 {
 				minP := common.Max(1, predPort-300)
