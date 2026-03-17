@@ -48,7 +48,7 @@ func sendP2PTestMsg(
 
 	if punchedAddr != nil {
 		logs.Debug("[P2P] fast-path punched=%s", punchedAddr.String())
-		rAddr, lAddr, rRole, rErr := waitP2PHandshakeSeed(parentCtx, localConn, sendRole, 10, punchedAddr)
+		rAddr, lAddr, rRole, rErr := waitP2PHandshakeSeed(parentCtx, localConn, sendRole, p2pHandshakeTimeout, punchedAddr)
 		if rErr == nil {
 			winner = localConn
 			return localConn, rAddr, lAddr, rRole, nil
@@ -77,23 +77,23 @@ func sendP2PTestMsg(
 	}
 
 	peerRegular := isRegularStep(peerInterval, hasPeerExt)
+	plan := selectPunchPlan(hasPeerExt, hasSelfExt, peerInterval, selfInterval, forceHard, portRestrictedByProbe)
 	selfHard := hasSelfExt && selfInterval != 0
-	allowAggressivePrediction := hasPeerExt && hasSelfExt && peerInterval != 0 && selfInterval != 0
-	allowConservativePrediction := hasPeerExt && peerInterval != 0
-	if forceHard {
-		selfHard = true
-	}
-	if portRestrictedByProbe {
+	if forceHard || portRestrictedByProbe || plan.MappingConfidenceLow {
 		selfHard = true
 	}
 
-	logs.Info("[P2P] nat peer=%s(%d,%v) self=%s(%d) peerLocal=%v forceHard=%v probePortRestricted=%v allowAggressivePrediction=%v allowConservativePrediction=%v",
+	allowAggressivePrediction := plan.EnableAggressivePredict
+	allowConservativePrediction := plan.EnableConservativePredict
+	normalizedPeerInterval := plan.NormalizedInterval
+
+	logs.Info("[P2P] nat peer=%s(%d,%v) self=%s(%d) peerLocal=%v forceHard=%v probePortRestricted=%v mappingConfidenceLow=%v allowAggressivePrediction=%v allowConservativePrediction=%v strategy.targetSpray=%v strategy.birthday=%v",
 		natHintByInterval(peerInterval, hasPeerExt), peerInterval, peerRegular,
 		natHintByInterval(selfInterval, hasSelfExt), selfInterval,
-		peerLocal != "", forceHard, portRestrictedByProbe, allowAggressivePrediction, allowConservativePrediction)
+		peerLocal != "", forceHard, portRestrictedByProbe, plan.MappingConfidenceLow, allowAggressivePrediction, allowConservativePrediction, plan.UseTargetSpray, plan.UseBirthdayAttack)
 
 	exactTargets := uniqAddrStrs(peerExt3, peerExt2, peerExt1)
-	predictionTargets := buildPredictedPeerAddrs(peerExt1, peerExt2, peerExt3, peerInterval)
+	predictionTargets := buildPredictedPeerAddrs(peerExt1, peerExt2, peerExt3, normalizedPeerInterval)
 	baseAddrStr := pickPrimaryPunchTarget(exactTargets, predictionTargets, allowAggressivePrediction)
 	targets := append([]string{}, exactTargets...)
 	if allowAggressivePrediction {
@@ -205,35 +205,9 @@ func sendP2PTestMsg(
 		}
 	}
 
-	isStrategyA := hasPeerExt && hasSelfExt && peerInterval == 0 && selfInterval != 0 && baseUDP != nil
-	if isStrategyA {
-		logs.Debug("[P2P] strategy=A open-many-listen target=%s", baseUDP.String())
-		extra, e := openRandomListenConnsForTarget(baseUDP, p2pStrategyAConnCount)
-		if e == nil && len(extra) > 0 {
-			connList = append(connList, extra...)
-		}
-		startTickerSender(500*time.Millisecond, func() {
-			for i, c := range connList {
-				_, _ = c.WriteTo(bConnect, baseUDP)
-				if i > 0 && i%40 == 0 {
-					time.Sleep(2 * time.Millisecond)
-				}
-			}
-		})
-	} else if selfHard && baseUDP != nil {
-		logs.Debug("[P2P] fallback: self hard-ish => open extra listen=%d target=%s", p2pSelfHardExtraListenCount, baseUDP.String())
-		extra, e := openRandomListenConnsForTarget(baseUDP, p2pSelfHardExtraListenCount)
-		if e == nil && len(extra) > 0 {
-			connList = append(connList, extra...)
-		}
-		startTickerSender(600*time.Millisecond, func() {
-			for i, c := range connList {
-				_, _ = c.WriteTo(bConnect, baseUDP)
-				if i > 0 && i%40 == 0 {
-					time.Sleep(2 * time.Millisecond)
-				}
-			}
-		})
+	if (selfHard || plan.UseTargetSpray) && baseUDP != nil {
+		logs.Debug("[P2P] spray.mode=target base=%s interval=%d rounds=%d burst=%d", baseUDP.String(), normalizedPeerInterval, p2pTargetSprayRounds, p2pTargetSprayBurst)
+		startTargetPortSpray(parentCtx, &closed, localConn, baseUDP, normalizedPeerInterval, p2pConeNearScanCount, p2pConeNearScanTick)
 	}
 
 	if allowAggressivePrediction && baseUDP != nil && peerRegular {
@@ -276,8 +250,8 @@ func sendP2PTestMsg(
 	if forceHard {
 		fallbackDelay = 0
 	}
-	if shouldRunFallbackRandomScan(allowAggressivePrediction, forceHard, portRestrictedByProbe) {
-		startFallbackRandomScan(parentCtx, &closed, localConn, peerExt1, peerExt2, peerExt3, fallbackDelay)
+	if shouldRunFallbackRandomScan(allowAggressivePrediction, allowConservativePrediction, forceHard, portRestrictedByProbe) || plan.MappingConfidenceLow {
+		startFallbackRandomScan(parentCtx, &closed, localConn, peerExt1, peerExt2, peerExt3, normalizedPeerInterval, fallbackDelay)
 	}
 
 	if hasPeerExt && hasSelfExt && peerInterval != 0 && selfInterval == 0 {
@@ -360,7 +334,7 @@ func sendP2PTestMsg(
 
 		for _, c := range connList {
 			go func(cc net.PacketConn) {
-				rAddr, lAddr, rRole, rErr := waitP2PHandshake(parentCtx, cc, sendRole, 10)
+				rAddr, lAddr, rRole, rErr := waitP2PHandshake(parentCtx, cc, sendRole, plan.HandshakeTimeoutSec)
 				if rErr == nil {
 					select {
 					case resultChan <- P2PResult{Conn: cc, RemoteAddr: rAddr, LocalAddr: lAddr, Role: rRole}:
@@ -383,7 +357,7 @@ func sendP2PTestMsg(
 		}
 	}
 
-	rAddr, lAddr, rRole, rErr := waitP2PHandshake(parentCtx, localConn, sendRole, 10)
+	rAddr, lAddr, rRole, rErr := waitP2PHandshake(parentCtx, localConn, sendRole, plan.HandshakeTimeoutSec)
 	if rErr == nil {
 		winner = localConn
 		return localConn, rAddr, lAddr, rRole, nil

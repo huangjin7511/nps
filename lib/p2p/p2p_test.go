@@ -93,8 +93,8 @@ func TestShouldRunFallbackRandomScan(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := shouldRunFallbackRandomScan(tt.aggressive, tt.forceHard, tt.pr); got != tt.want {
-				t.Fatalf("shouldRunFallbackRandomScan(%v,%v,%v)=%v, want %v", tt.aggressive, tt.forceHard, tt.pr, got, tt.want)
+			if got := shouldRunFallbackRandomScan(tt.aggressive, false, tt.forceHard, tt.pr); got != tt.want {
+				t.Fatalf("shouldRunFallbackRandomScan(%v,%v,%v,%v)=%v, want %v", tt.aggressive, false, tt.forceHard, tt.pr, got, tt.want)
 			}
 		})
 	}
@@ -340,5 +340,106 @@ func TestIsP2PNATProbePacket(t *testing.T) {
 	}
 	if isP2PNATProbePacket([]byte("p2pc")) {
 		t.Fatal("non-probe packet should not be recognized as nat-probe")
+	}
+}
+
+func TestPredictionStrategyFlags(t *testing.T) {
+	if !shouldEnableConservativePrediction(false, 0, true, false, false) {
+		t.Fatal("forceHard should enable conservative prediction")
+	}
+	if !shouldEnableConservativePrediction(false, 0, false, true, false) {
+		t.Fatal("portRestrictedByProbe should enable conservative prediction")
+	}
+	if shouldEnableConservativePrediction(false, 0, false, false, false) {
+		t.Fatal("insufficient signal should not enable conservative prediction")
+	}
+
+	if !shouldEnableAggressivePrediction(true, false, 0, 0, true, false, false) {
+		t.Fatal("forceHard with peer ext should enable aggressive prediction")
+	}
+	if !shouldEnableAggressivePrediction(true, false, 0, 0, false, true, false) {
+		t.Fatal("portRestrictedByProbe with peer ext should enable aggressive prediction")
+	}
+	if shouldEnableAggressivePrediction(false, true, 2, 2, true, false, false) {
+		t.Fatal("without peer ext aggressive prediction should stay disabled")
+	}
+
+	if got := normalizePredictionInterval(0, true); got != 1 {
+		t.Fatalf("normalizePredictionInterval(0,true)=%d, want 1", got)
+	}
+	if got := normalizePredictionInterval(3, true); got != 3 {
+		t.Fatalf("normalizePredictionInterval(3,true)=%d, want 3", got)
+	}
+	if got := normalizePredictionInterval(0, false); got != 0 {
+		t.Fatalf("normalizePredictionInterval(0,false)=%d, want 0", got)
+	}
+}
+
+func TestBuildTargetSprayPorts(t *testing.T) {
+	ports := buildTargetSprayPorts(1000, 2, 5)
+	if len(ports) != 5 {
+		t.Fatalf("len(ports)=%d, want 5", len(ports))
+	}
+	if ports[0] != 1000 || ports[1] != 1002 {
+		t.Fatalf("unexpected spray head: %#v", ports)
+	}
+	has := map[int]bool{}
+	for _, p := range ports {
+		has[p] = true
+	}
+	if !has[998] {
+		t.Fatalf("expected delta mirror port 998 in %#v", ports)
+	}
+
+	ports = buildTargetSprayPorts(10, 0, 3)
+	if len(ports) != 3 || ports[0] != 10 {
+		t.Fatalf("unexpected interval=0 ports: %#v", ports)
+	}
+}
+
+func TestMappingConfidenceLowEnablesPrediction(t *testing.T) {
+	plan := selectPunchPlan(true, false, 0, 0, false, false)
+	if !plan.MappingConfidenceLow {
+		t.Fatal("expected mappingConfidenceLow=true for interval=0")
+	}
+	if !plan.EnableConservativePredict {
+		t.Fatal("mappingConfidenceLow should enable conservative prediction")
+	}
+	if !plan.EnableAggressivePredict {
+		t.Fatal("mappingConfidenceLow should enable aggressive prediction when peer ext exists")
+	}
+	if plan.NormalizedInterval != 1 {
+		t.Fatalf("normalized interval=%d, want 1", plan.NormalizedInterval)
+	}
+}
+
+func TestBuildTargetSprayPortsEdgeCases(t *testing.T) {
+	low := buildTargetSprayPorts(1, 1, 5)
+	for _, p := range low {
+		if p < 1 || p > 65535 {
+			t.Fatalf("low edge invalid port: %d", p)
+		}
+	}
+
+	high := buildTargetSprayPorts(65535, 2, 5)
+	for _, p := range high {
+		if p < 1 || p > 65535 {
+			t.Fatalf("high edge invalid port: %d", p)
+		}
+	}
+
+	neg := buildTargetSprayPorts(5000, -2, 5)
+	if len(neg) < 3 || neg[0] != 5000 {
+		t.Fatalf("unexpected negative interval result: %#v", neg)
+	}
+}
+
+func TestSelectPunchPlanDefaults(t *testing.T) {
+	plan := selectPunchPlan(true, true, 2, 2, false, false)
+	if plan.HandshakeTimeoutSec != p2pHandshakeTimeout {
+		t.Fatalf("handshake timeout=%d, want %d", plan.HandshakeTimeoutSec, p2pHandshakeTimeout)
+	}
+	if plan.UseBirthdayAttack {
+		t.Fatal("birthday attack should be reserved/off by default")
 	}
 }

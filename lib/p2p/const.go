@@ -14,9 +14,7 @@ const (
 
 	// handshake read loop
 	p2pHandshakeReadMax = 1500 * time.Millisecond
-
-	// strategy A (open many local ports)
-	p2pStrategyAConnCount = 256
+	p2pHandshakeTimeout = 20
 
 	// base send
 	p2pConeSendTick      = 500 * time.Millisecond
@@ -32,6 +30,10 @@ const (
 
 	// near scan (regular ports change)
 	p2pConeNearScanCount       = 128
+	p2pTargetSprayRounds       = 2
+	p2pTargetSprayBurst        = 16
+	p2pTargetSprayInterval     = 3 * time.Millisecond
+	p2pTargetSprayPhaseGap     = 40 * time.Millisecond
 	p2pConeNearScanRange       = 256
 	p2pConeNearScanTick        = 1500 * time.Millisecond
 	p2pConeSmallContigRange    = 6
