@@ -148,14 +148,24 @@ func StartNewServer(cnf *file.Tunnel, bridgeDisconnect int) {
 		}
 	}()
 	if p, err := beego.AppConfig.Int("p2p_port"); err == nil {
+		extraReply := beego.AppConfig.DefaultBool("p2p_probe_extra_reply", true)
+		ok := true
 		for i := 0; i < 3; i++ {
 			port := p + i
 			if common.TestUdpPort(port) {
-				go func(pp int) { _ = proxy.NewP2PServer(pp).Start() }(port)
-				logs.Info("Started P2P Server on port %d", port)
+				logs.Info("P2P probe port %d available", port)
 			} else {
 				logs.Error("Port %d is unavailable.", port)
+				ok = false
 			}
+		}
+		if ok {
+			go func(basePort int, enableExtraReply bool) {
+				if err := proxy.NewP2PServer(basePort, enableExtraReply).Start(); err != nil {
+					logs.Error("p2p probe server stopped unexpectedly: %v", err)
+				}
+			}(p, extraReply)
+			logs.Info("Started P2P probe server on ports %d-%d", p, p+2)
 		}
 	}
 	go DealBridgeTask()

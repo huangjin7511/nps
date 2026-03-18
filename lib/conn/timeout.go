@@ -3,12 +3,15 @@ package conn
 import (
 	"crypto/tls"
 	"net"
+	"sync"
 	"time"
 )
 
 type TimeoutConn struct {
 	net.Conn
 	idleTimeout time.Duration
+	mu          sync.Mutex
+	lastSet     time.Time
 }
 
 func NewTimeoutConn(c net.Conn, idle time.Duration) net.Conn {
@@ -16,13 +19,24 @@ func NewTimeoutConn(c net.Conn, idle time.Duration) net.Conn {
 }
 
 func (c *TimeoutConn) Read(b []byte) (int, error) {
-	_ = c.SetDeadline(time.Now().Add(c.idleTimeout))
+	c.refreshDeadline()
 	return c.Conn.Read(b)
 }
 
 func (c *TimeoutConn) Write(b []byte) (int, error) {
-	_ = c.SetDeadline(time.Now().Add(c.idleTimeout))
+	c.refreshDeadline()
 	return c.Conn.Write(b)
+}
+
+func (c *TimeoutConn) refreshDeadline() {
+	deadline := time.Now().Add(c.idleTimeout)
+	c.mu.Lock()
+	if !c.lastSet.IsZero() && !deadline.After(c.lastSet) {
+		deadline = c.lastSet.Add(time.Nanosecond)
+	}
+	c.lastSet = deadline
+	c.mu.Unlock()
+	_ = c.SetDeadline(deadline)
 }
 
 func NewTimeoutTLSConn(raw net.Conn, cfg *tls.Config, idle, handshakeTimeout time.Duration) (net.Conn, error) {

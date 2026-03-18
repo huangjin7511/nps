@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ccding/go-stun/stun"
 	"github.com/djylb/nps/client"
 	"github.com/djylb/nps/lib/common"
 	"github.com/djylb/nps/lib/config"
@@ -23,10 +22,13 @@ import (
 	"github.com/djylb/nps/lib/install"
 	"github.com/djylb/nps/lib/logs"
 	"github.com/djylb/nps/lib/mux"
+	"github.com/djylb/nps/lib/p2p"
 	"github.com/djylb/nps/lib/version"
 	"github.com/kardianos/service"
+	pionstun "github.com/pion/stun/v3"
 
 	goflag "flag"
+
 	flag "github.com/spf13/pflag"
 )
 
@@ -207,20 +209,53 @@ func main() {
 		install.UpdateNpc()
 		return
 	case "nat":
-		c := stun.NewClient()
-		c.SetServerAddr(*stunAddr)
-		fmt.Println("STUN Server:", *stunAddr)
-		nat, host, err := c.Discover()
+		c, err := pionstun.Dial("udp", *stunAddr)
 		if err != nil {
 			logs.Error("Error: %v", err)
 			return
 		}
-		fmt.Println("NAT Type:", nat)
-		if host != nil {
-			fmt.Println("External IP Family:", host.Family())
-			fmt.Println("External IP:", host.IP())
-			fmt.Println("External Port:", host.Port())
+		defer func() { _ = c.Close() }()
+		request := pionstun.MustBuild(pionstun.TransactionID, pionstun.BindingRequest, pionstun.Fingerprint)
+		var observedAddr string
+		err = c.Do(request, func(res pionstun.Event) {
+			if res.Error != nil {
+				err = res.Error
+				return
+			}
+			if res.Message.Contains(pionstun.AttrFingerprint) {
+				if ferr := pionstun.Fingerprint.Check(res.Message); ferr != nil {
+					err = ferr
+					return
+				}
+			}
+			var xorAddr pionstun.XORMappedAddress
+			if derr := xorAddr.GetFrom(res.Message); derr == nil {
+				observedAddr = xorAddr.String()
+				return
+			}
+			var mappedAddr pionstun.MappedAddress
+			if derr := mappedAddr.GetFrom(res.Message); derr == nil {
+				observedAddr = mappedAddr.String()
+				return
+			}
+			err = fmt.Errorf("stun response missing mapped address")
+		})
+		fmt.Println("STUN Server:", *stunAddr)
+		if err != nil {
+			logs.Error("Error: %v", err)
+			return
 		}
+		fmt.Println("Observed Address:", observedAddr)
+		if ip := common.GetIpByAddr(observedAddr); ip != "" {
+			if parsed := common.GetIpByAddr(observedAddr); parsed != "" {
+				family := "IPv4"
+				if p := strings.Trim(parsed, "[]"); strings.Contains(p, ":") && !strings.Contains(p, ".") {
+					family = "IPv6"
+				}
+				fmt.Println("Observed IP Family:", family)
+			}
+		}
+		fmt.Println("Note: a single STUN binding request only returns the observed external address; reliable NAT behavior classification still requires multi-endpoint probing.")
 		os.Exit(0)
 	case "start", "stop", "restart":
 		// support busyBox and sysV, for openWrt
@@ -377,6 +412,7 @@ func run(ctx context.Context, cancel context.CancelFunc) {
 		commonConfig.VKey = *verifyKey
 		commonConfig.Tp = strings.ToLower(*connType)
 		commonConfig.LocalIP = strings.TrimSpace(*localIP)
+		commonConfig.P2PStunServers = strings.TrimSpace(*stunAddr)
 		localServer := new(config.LocalServer)
 		localServer.Type = strings.ToLower(*localType)
 		localServer.Password = *password
@@ -445,7 +481,7 @@ func run(ctx context.Context, cancel context.CancelFunc) {
 			go func(serverAddr, verifyKey, connType, localIP string) {
 				for {
 					logs.Info("Start server: %s vkey: %s type: %s local_ip: %s", serverAddr, verifyKey, connType, localIP)
-					client.NewRPClient(serverAddr, verifyKey, connType, *proxyUrl, localIP, "", nil, *disconnectTime, nil).Start(ctx)
+					client.NewRPClient(serverAddr, verifyKey, connType, *proxyUrl, localIP, "", nil, *disconnectTime, nil, p2p.ParseSTUNServerList(*stunAddr)).Start(ctx)
 					if *autoReconnect {
 						logs.Info("Client closed! It will be reconnected in five seconds")
 						time.Sleep(time.Second * 5)
@@ -470,7 +506,7 @@ func run(ctx context.Context, cancel context.CancelFunc) {
 		}
 
 		for _, path := range configPaths {
-			go client.StartFromFile(ctx, cancel, path)
+			go client.StartFromFile(ctx, cancel, path, p2p.ParseSTUNServerList(*stunAddr))
 		}
 	}
 }

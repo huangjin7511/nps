@@ -24,6 +24,7 @@ import (
 	"github.com/djylb/nps/lib/conn"
 	"github.com/djylb/nps/lib/crypt"
 	"github.com/djylb/nps/lib/logs"
+	"github.com/djylb/nps/lib/p2p"
 	"github.com/djylb/nps/lib/version"
 	"github.com/quic-go/quic-go"
 	"github.com/xtaci/kcp-go/v5"
@@ -119,11 +120,14 @@ func RegisterLocalIp(server string, vKey string, tp string, proxyUrl string, loc
 
 var errAdd = errors.New("the server returned an error, which port or host may have been occupied or not allowed to open")
 
-func StartFromFile(pCtx context.Context, pCancel context.CancelFunc, path string) {
+func StartFromFile(pCtx context.Context, pCancel context.CancelFunc, path string, defaultP2PSTUNServers []string) {
 	cnf, err := config.NewConfig(path)
 	if err != nil || cnf.CommonConfig == nil {
 		logs.Error("Config file %s loading error %v", path, err)
 		os.Exit(1)
+	}
+	if strings.TrimSpace(cnf.CommonConfig.P2PStunServers) == "" && len(defaultP2PSTUNServers) > 0 {
+		cnf.CommonConfig.P2PStunServers = strings.Join(defaultP2PSTUNServers, ",")
 	}
 	logs.Info("Loading configuration file %s successfully", path)
 
@@ -256,7 +260,7 @@ func StartFromFile(pCtx context.Context, pCancel context.CancelFunc, path string
 			logs.Info("web access login username:%s password:%s", cnf.CommonConfig.Client.WebUserName, cnf.CommonConfig.Client.WebPassword)
 		}
 
-		NewRPClient(cnf.CommonConfig.Server, vkey, cnf.CommonConfig.Tp, cnf.CommonConfig.ProxyUrl, cnf.CommonConfig.LocalIP, uuid, cnf, cnf.CommonConfig.DisconnectTime, fsm).Start(ctx)
+		NewRPClient(cnf.CommonConfig.Server, vkey, cnf.CommonConfig.Tp, cnf.CommonConfig.ProxyUrl, cnf.CommonConfig.LocalIP, uuid, cnf, cnf.CommonConfig.DisconnectTime, fsm, p2p.ParseSTUNServerList(cnf.CommonConfig.P2PStunServers)).Start(ctx)
 		fsm.CloseAll()
 		cancel()
 	}

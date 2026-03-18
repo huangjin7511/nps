@@ -1,270 +1,289 @@
 package p2p
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"net"
 	"time"
 
 	"github.com/djylb/nps/lib/common"
+	"github.com/djylb/nps/lib/conn"
 	"github.com/djylb/nps/lib/logs"
 )
 
-func waitP2PHandshakeSeed(parentCtx context.Context, localConn net.PacketConn, sendRole string, readTimeout int, seed net.Addr) (remoteAddr, localAddr, role string, err error) {
-	return waitP2PHandshakeWithSeed(parentCtx, localConn, sendRole, readTimeout, seed)
-}
-
-func waitP2PHandshake(parentCtx context.Context, localConn net.PacketConn, sendRole string, readTimeout int) (remoteAddr, localAddr, role string, err error) {
-	return waitP2PHandshakeWithSeed(parentCtx, localConn, sendRole, readTimeout, nil)
-}
-
-func waitP2PHandshakeWithSeed(parentCtx context.Context, localConn net.PacketConn, sendRole string, readTimeout int, seed net.Addr) (remoteAddr, localAddr, role string, err error) {
+func (s *runtimeSession) readLoopOnConn(ctx context.Context, readConn net.PacketConn) {
 	buf := common.BufPoolUdp.Get()
 	defer common.BufPoolUdp.Put(buf)
-	localAddrStr := localConn.LocalAddr().String()
-
-	isServerAnnounce := func(pkt []byte) bool {
-		return bytes.Contains(pkt, bConnDataSeq)
-	}
-
-	sendRawBurst := func(msg []byte, a net.Addr, burst int) {
-		if a == nil || burst <= 0 {
-			return
-		}
-		for i := 0; i < burst; i++ {
-			_, _ = localConn.WriteTo(msg, a)
-		}
-	}
-
-	type peerState struct {
-		lastSuccSend time.Time
-		lastEndSend  time.Time
-		succSent     int
-		endSent      int
-
-		seenConnect bool
-		succSpray   bool
-		endSpray    bool
-	}
-	states := make(map[string]*peerState, 32)
-	getState := func(k string) *peerState {
-		if s, ok := states[k]; ok {
-			return s
-		}
-		s := &peerState{}
-		states[k] = s
-		return s
-	}
-
-	trySendSucc := func(st *peerState, addr net.Addr, burst int) {
-		if st == nil || addr == nil || burst <= 0 {
-			return
-		}
-		now := time.Now()
-		if st.succSent >= p2pMaxSuccPacketsPerPeer {
-			return
-		}
-		if now.Sub(st.lastSuccSend) < p2pSuccMinInterval {
-			return
-		}
-		st.lastSuccSend = now
-
-		if st.succSent+burst > p2pMaxSuccPacketsPerPeer {
-			burst = p2pMaxSuccPacketsPerPeer - st.succSent
-		}
-		if burst <= 0 {
-			return
-		}
-		st.succSent += burst
-		sendRawBurst(bSuccess, addr, burst)
-	}
-
-	trySendEnd := func(st *peerState, addr net.Addr, burst int) {
-		if st == nil || addr == nil || burst <= 0 {
-			return
-		}
-		now := time.Now()
-		if st.endSent >= p2pMaxEndPacketsPerPeer {
-			return
-		}
-		if now.Sub(st.lastEndSend) < p2pEndMinInterval {
-			return
-		}
-		st.lastEndSend = now
-
-		if st.endSent+burst > p2pMaxEndPacketsPerPeer {
-			burst = p2pMaxEndPacketsPerPeer - st.endSent
-		}
-		if burst <= 0 {
-			return
-		}
-		st.endSent += burst
-		sendRawBurst(bEnd, addr, burst)
-	}
-
-	startSpray := func(st *peerState, addr net.Addr, msg []byte, window time.Duration, tick time.Duration, maxCount int, markEnd bool) {
-		if st == nil || addr == nil || window <= 0 || tick <= 0 || maxCount <= 0 {
-			return
-		}
-		if markEnd {
-			if st.endSpray {
-				return
-			}
-			st.endSpray = true
-		} else {
-			if st.succSpray {
-				return
-			}
-			st.succSpray = true
-		}
-
-		go func(a net.Addr) {
-			deadline := time.Now().Add(window)
-			t := time.NewTicker(tick)
-			defer t.Stop()
-
-			sent := 0
-			for {
-				select {
-				case <-parentCtx.Done():
-					return
-				case <-t.C:
-					if time.Now().After(deadline) || sent >= maxCount {
-						return
-					}
-					_, _ = localConn.WriteTo(msg, a)
-					sent++
-				}
-			}
-		}(addr)
-	}
-
-	if seed != nil {
-		sendRawBurst(bConnect, seed, 1)
-		sendRawBurst(bSuccess, seed, 3)
-
-		go func(a net.Addr) {
-			deadline := time.Now().Add(p2pSpraySeedWindow)
-			t := time.NewTicker(p2pSprayTick)
-			defer t.Stop()
-			sent := 0
-			for {
-				select {
-				case <-parentCtx.Done():
-					return
-				case <-t.C:
-					if time.Now().After(deadline) || sent >= p2pSpraySeedSucc {
-						return
-					}
-					_, _ = localConn.WriteTo(bSuccess, a)
-					sent++
-				}
-			}
-		}(seed)
-	}
-
-	if readTimeout <= 0 {
-		readTimeout = 10
-	}
-	logs.Trace("[P2P] handshake wait role=%s local=%s timeout=%ds", sendRole, localAddrStr, readTimeout)
-
-	wantRole := common.WORK_P2P_PROVIDER
-	if sendRole == common.WORK_P2P_VISITOR {
-		wantRole = common.WORK_P2P_VISITOR
-	}
-	confirmedRemote := ""
-
 	for {
 		select {
-		case <-parentCtx.Done():
-			logs.Error("[P2P] handshake fail role=%s local=%s err=%v", sendRole, localAddrStr, parentCtx.Err())
-			return "", localAddrStr, sendRole, mapP2PContextError(parentCtx.Err())
+		case <-ctx.Done():
+			return
 		default:
 		}
-
-		_ = localConn.SetReadDeadline(time.Now().Add(p2pHandshakeReadMax))
-		n, addr, rerr := localConn.ReadFrom(buf)
-		_ = localConn.SetReadDeadline(time.Time{})
-		if rerr != nil {
-			var ne net.Error
-			if errors.As(rerr, &ne) && ne.Timeout() {
+		_ = readConn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+		n, addr, err := readConn.ReadFrom(buf)
+		_ = readConn.SetReadDeadline(time.Time{})
+		if err != nil {
+			if conn.IsTimeout(err) || isIgnorableUDPIcmpError(err) {
 				continue
 			}
-			if isIgnorableUDPIcmpError(rerr) {
-				logs.Debug("[P2P] ignore transient udp read error role=%s local=%s err=%v", sendRole, localAddrStr, rerr)
-				continue
-			}
-			logs.Error("[P2P] handshake read fail role=%s local=%s err=%v", sendRole, localAddrStr, rerr)
-			return "", localAddrStr, sendRole, rerr
+			return
 		}
-
-		pkt := buf[:n]
-		if isServerAnnounce(pkt) {
+		packet, err := DecodeUDPPacket(buf[:n], s.start.Token)
+		if err != nil {
+			if errors.Is(err, ErrP2PTokenMismatch) {
+				s.recordTokenMismatch()
+			}
 			continue
 		}
-
-		switch {
-		case bytes.Equal(pkt, bConnect):
-			from := addr.String()
-			st := getState(from)
-			st.seenConnect = true
-
-			logs.Trace("[P2P] recv CONNECT from=%s local=%s -> send SUCCESS burst=%d + spray", from, localAddrStr, p2pSuccBurstOnConnect)
-
-			trySendSucc(st, addr, p2pSuccBurstOnConnect)
-			startSpray(st, addr, bSuccess, p2pSpraySuccWindow, p2pSprayTick, p2pSpraySuccMax, false)
-
-		case bytes.Equal(pkt, bSuccess):
-			from := addr.String()
-			st := getState(from)
-			if confirmedRemote != "" && confirmedRemote != from {
-				logs.Debug("[P2P] remote corrected old=%s new=%s local=%s", confirmedRemote, from, localAddrStr)
-			}
-			confirmedRemote = from
-
-			if sendRole == common.WORK_P2P_VISITOR {
-				logs.Trace("[P2P] visitor recv SUCCESS from=%s local=%s -> send END burst=%d + spray",
-					from, localAddrStr, p2pEndBurstOnSuccess)
-
-				trySendEnd(st, addr, p2pEndBurstOnSuccess)
-				startSpray(st, addr, bEnd, p2pSprayEndWindow, p2pSprayTick, p2pSprayEndMax, true)
-				continue
-			}
-
-			logs.Trace("[P2P] provider recv SUCCESS from=%s local=%s -> echo SUCCESS=%d + push END=%d", from, localAddrStr, p2pSuccEchoOnSuccess, p2pEndBurstOnSuccess)
-
-			trySendSucc(st, addr, p2pSuccEchoOnSuccess)
-			trySendEnd(st, addr, p2pEndBurstOnSuccess)
-			startSpray(st, addr, bEnd, p2pSprayEndWindow, p2pSprayTick, p2pSprayEndMax, true)
-
-			_, fixedLocal, ferr := common.FixUdpListenAddrForRemote(from, localAddrStr)
-			if ferr != nil {
-				return "", "", sendRole, ferr
-			}
-			logs.Debug("[P2P] handshake OK (provider-on-success) role=%s remote=%s local=%s", wantRole, from, fixedLocal)
-			return from, fixedLocal, wantRole, nil
-
-		case bytes.Equal(pkt, bEnd):
-			from := addr.String()
-			st := getState(from)
-			if confirmedRemote != "" && confirmedRemote != from {
-				logs.Debug("[P2P] remote corrected old=%s new=%s local=%s", confirmedRemote, from, localAddrStr)
-			}
-			confirmedRemote = from
-			logs.Trace("[P2P] recv END from=%s local=%s -> ack END=%d then accept", from, localAddrStr, p2pEndBurstOnEndAck)
-
-			trySendEnd(st, addr, p2pEndBurstOnEndAck)
-
-			_, fixedLocal, ferr := common.FixUdpListenAddrForRemote(from, localAddrStr)
-			if ferr != nil {
-				return "", "", sendRole, ferr
-			}
-			logs.Debug("[P2P] handshake OK role=%s remote=%s local=%s", wantRole, from, fixedLocal)
-			return from, fixedLocal, wantRole, nil
-
-		default:
+		if packet.SessionID != s.start.SessionID || packet.Token != s.start.Token {
+			s.recordTokenMismatch()
 			continue
+		}
+		if !s.acceptReplay(packet) {
+			continue
+		}
+		s.recordTokenVerified()
+		remoteAddr := addr.String()
+		localAddr := readConn.LocalAddr().String()
+		switch packet.Type {
+		case packetTypeProbe, packetTypePunch:
+			s.cm.Observe(localAddr, remoteAddr)
+			s.updateCandidateRemote(remoteAddr)
+			_ = s.writeUDPToConn(readConn, packetTypeSucc, addr)
+		case packetTypeSucc:
+			logs.Info("[P2P] SUCCESS received local=%s remote=%s", localAddr, remoteAddr)
+			s.cm.Observe(localAddr, remoteAddr)
+			s.cm.MarkSucceeded(localAddr, remoteAddr)
+			s.updateCandidateRemote(remoteAddr)
+			logs.Info("[P2P] candidate hit local=%s remote=%s", localAddr, remoteAddr)
+			_ = s.sendProgress("success_received", "ok", remoteAddr, localAddr, remoteAddr, nil)
+			if s.start.Role == common.WORK_P2P_VISITOR {
+				if pair, nominated := s.cm.TryNominate(localAddr, remoteAddr); nominated {
+					logs.Info("[P2P] candidate nominated local=%s remote=%s", pair.LocalAddr, pair.RemoteAddr)
+					_ = s.writeUDPToConn(readConn, packetTypeEnd, addr)
+					logs.Info("[P2P] END sent local=%s remote=%s", localAddr, remoteAddr)
+					_ = s.sendProgress("candidate_nominated", "ok", remoteAddr, localAddr, remoteAddr, nil)
+					s.startNominationLoop(ctx, readConn, addr)
+				}
+			} else {
+				_ = s.writeUDPToConn(readConn, packetTypeSucc, addr)
+			}
+		case packetTypeEnd:
+			logs.Info("[P2P] END received local=%s remote=%s", localAddr, remoteAddr)
+			s.cm.Observe(localAddr, remoteAddr)
+			if s.start.Role == common.WORK_P2P_PROVIDER {
+				if pair, nominated := s.cm.TryNominate(localAddr, remoteAddr); nominated || (pair != nil && pair.Nominated) {
+					if confirmed := s.cm.Confirm(localAddr, remoteAddr); confirmed != nil {
+						logs.Info("[P2P] candidate confirmed local=%s remote=%s", localAddr, remoteAddr)
+						s.updateConfirmedRemote(remoteAddr)
+						_ = s.writeUDPToConn(readConn, packetTypeAccept, addr)
+						_ = s.sendProgress("candidate_confirmed", "ok", remoteAddr, localAddr, remoteAddr, nil)
+						s.signalConfirmed(readConn, localAddr, remoteAddr)
+					}
+				}
+			}
+		case packetTypeAccept:
+			logs.Info("[P2P] ACCEPT received local=%s remote=%s", localAddr, remoteAddr)
+			s.cm.Observe(localAddr, remoteAddr)
+			if s.start.Role == common.WORK_P2P_VISITOR {
+				if confirmed := s.cm.Confirm(localAddr, remoteAddr); confirmed != nil {
+					logs.Info("[P2P] candidate confirmed local=%s remote=%s", localAddr, remoteAddr)
+					s.updateConfirmedRemote(remoteAddr)
+					_ = s.sendProgress("accept_received", "ok", remoteAddr, localAddr, remoteAddr, nil)
+					s.signalConfirmed(readConn, localAddr, remoteAddr)
+				}
+			}
 		}
 	}
+}
+
+func (s *runtimeSession) writeUDPTo(packetType string, addr net.Addr) error {
+	return s.writeUDPToConn(s.localConn, packetType, addr)
+}
+
+func (s *runtimeSession) writeUDPToConn(writeConn net.PacketConn, packetType string, addr net.Addr) error {
+	packet := newUDPPacket(s.start.SessionID, s.start.Token, s.start.Role, packetType)
+	raw, err := EncodeUDPPacket(packet)
+	if err != nil {
+		return err
+	}
+	_, err = writeConn.WriteTo(raw, addr)
+	return err
+}
+
+func (s *runtimeSession) updateCandidateRemote(remote string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.endpoints.ConfirmedRemote != "" && s.endpoints.ConfirmedRemote != remote {
+		return
+	}
+	if s.endpoints.CandidateRemote != "" && s.endpoints.CandidateRemote != remote {
+		logs.Info("[P2P] remote corrected old=%s new=%s", s.endpoints.CandidateRemote, remote)
+	}
+	s.endpoints.CandidateRemote = remote
+}
+
+func (s *runtimeSession) updateConfirmedRemote(remote string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.endpoints.ConfirmedRemote != "" && s.endpoints.ConfirmedRemote != remote {
+		return
+	}
+	s.endpoints.CandidateRemote = remote
+	s.endpoints.ConfirmedRemote = remote
+}
+
+func (s *runtimeSession) signalConfirmed(readConn net.PacketConn, localAddr, remote string) {
+	select {
+	case s.confirmed <- confirmedPair{conn: readConn, localAddr: localAddr, remoteAddr: remote}:
+	default:
+	}
+}
+
+func trySendProgress(c *conn.Conn, sessionID, role, stage, detail string) error {
+	return trySendProgressWithStatus(c, sessionID, role, stage, "ok", detail, "", "", nil, nil)
+}
+
+func trySendProgressWithStatus(c *conn.Conn, sessionID, role, stage, status, detail, localAddr, remoteAddr string, meta map[string]string, counters map[string]int) error {
+	if c == nil {
+		return nil
+	}
+	return WritePunchProgress(c, P2PPunchProgress{
+		SessionID:  sessionID,
+		Role:       role,
+		Stage:      stage,
+		Status:     status,
+		Detail:     detail,
+		LocalAddr:  localAddr,
+		RemoteAddr: remoteAddr,
+		Meta:       meta,
+		Counters:   counters,
+	})
+}
+
+func (s *runtimeSession) sendProgress(stage, status, detail, localAddr, remoteAddr string, meta map[string]string) error {
+	if s == nil {
+		return nil
+	}
+	return trySendProgressWithStatus(s.control, s.start.SessionID, s.start.Role, stage, status, detail, localAddr, remoteAddr, meta, s.progressCounters())
+}
+
+func trySendAbort(c *conn.Conn, sessionID, role, reason string) error {
+	if c == nil {
+		return nil
+	}
+	return WriteBridgeMessage(c, common.P2P_PUNCH_ABORT, P2PPunchAbort{
+		SessionID: sessionID,
+		Role:      role,
+		Reason:    reason,
+	})
+}
+
+func (s *runtimeSession) startNominationLoop(ctx context.Context, writeConn net.PacketConn, remoteAddr net.Addr) {
+	if writeConn == nil || remoteAddr == nil {
+		return
+	}
+	key := candidateKey(writeConn.LocalAddr().String(), remoteAddr.String())
+	s.mu.Lock()
+	if _, ok := s.nominate[key]; ok {
+		s.mu.Unlock()
+		return
+	}
+	s.nominate[key] = struct{}{}
+	s.mu.Unlock()
+
+	go func() {
+		defer func() {
+			s.mu.Lock()
+			delete(s.nominate, key)
+			s.mu.Unlock()
+		}()
+		ticker := time.NewTicker(300 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if s.cm.ConfirmedPair() != nil {
+					return
+				}
+				pair := s.cm.NominatedPair()
+				if pair == nil || candidateKey(pair.LocalAddr, pair.RemoteAddr) != key {
+					return
+				}
+				_ = s.writeUDPToConn(writeConn, packetTypeEnd, remoteAddr)
+			}
+		}
+	}()
+}
+
+func (s *runtimeSession) recordTokenMismatch() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stats.tokenMismatchDropped++
+}
+
+func (s *runtimeSession) recordReplayDrop() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.stats.replayDropped++
+}
+
+func (s *runtimeSession) recordTokenVerified() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stats.tokenVerified {
+		return
+	}
+	s.stats.tokenVerified = true
+	logs.Info("[P2P] token verified role=%s session=%s", s.start.Role, s.start.SessionID)
+}
+
+func (s *runtimeSession) logTokenStats() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stats.tokenMismatchDropped > 0 {
+		logs.Info("[P2P] token mismatch silently dropped role=%s count=%d", s.start.Role, s.stats.tokenMismatchDropped)
+	}
+	if s.stats.replayDropped > 0 {
+		logs.Info("[P2P] replay silently dropped role=%s count=%d", s.start.Role, s.stats.replayDropped)
+	}
+}
+
+func (s *runtimeSession) progressCounters() map[string]int {
+	if s == nil {
+		return nil
+	}
+	counts := s.cm.StateCounts()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if counts == nil {
+		counts = make(map[string]int)
+	}
+	counts["token_mismatch_dropped"] = s.stats.tokenMismatchDropped
+	counts["replay_dropped"] = s.stats.replayDropped
+	if s.stats.tokenVerified {
+		counts["token_verified"] = 1
+	}
+	return counts
+}
+
+func effectiveExtraReplySeen(extraReplySeen, expectExtraReply bool) bool {
+	return extraReplySeen || !expectExtraReply
+}
+
+func (s *runtimeSession) acceptReplay(packet *UDPPacket) bool {
+	if packet == nil {
+		return false
+	}
+	if s.replay == nil {
+		return true
+	}
+	if s.replay.Accept(packet.Timestamp, packet.Nonce) {
+		return true
+	}
+	s.recordReplayDrop()
+	return false
 }

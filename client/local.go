@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"strconv"
 	"sync"
 	"time"
 
@@ -599,11 +598,12 @@ func (mgr *P2PManager) newUdpConn(localAddr string, cfg *config.CommonConfig, l 
 	secretConn := mgr.secretConn
 	mgr.mu.Unlock()
 	var err error
-	var c net.Conn
+	var rawConn net.Conn
+	var remoteConn *conn.Conn
 	if secretConn != nil {
 		switch tun := mgr.secretConn.(type) {
 		case *mux.Mux:
-			c, err = tun.NewConn()
+			rawConn, err = tun.NewConn()
 			if err != nil {
 				_ = tun.Close()
 			}
@@ -611,7 +611,7 @@ func (mgr *P2PManager) newUdpConn(localAddr string, cfg *config.CommonConfig, l 
 			var stream *quic.Stream
 			stream, err = tun.OpenStreamSync(mgr.ctx)
 			if err == nil {
-				c = conn.NewQuicStreamConn(stream, tun)
+				rawConn = conn.NewQuicStreamConn(stream, tun)
 			} else {
 				_ = tun.CloseWithError(0, err.Error())
 			}
@@ -628,7 +628,7 @@ func (mgr *P2PManager) newUdpConn(localAddr string, cfg *config.CommonConfig, l 
 	}
 	if secretConn == nil {
 		var uuid string
-		c, uuid, err = NewConn(cfg.Tp, cfg.VKey, cfg.Server, cfg.ProxyUrl, cfg.LocalIP)
+		remoteConn, uuid, err = NewConn(cfg.Tp, cfg.VKey, cfg.Server, cfg.ProxyUrl, cfg.LocalIP)
 		if err != nil {
 			logs.Error("Failed to connect to server: %v", err)
 			if AutoReconnect {
@@ -638,18 +638,19 @@ func (mgr *P2PManager) newUdpConn(localAddr string, cfg *config.CommonConfig, l 
 			}
 			return nil
 		}
-		defer func() { _ = c.Close() }()
 		mgr.mu.Lock()
 		if mgr.uuid == "" {
 			mgr.uuid = uuid
 		}
 		mgr.mu.Unlock()
 	}
-	if c == nil {
+	if remoteConn == nil && rawConn != nil {
+		remoteConn = conn.NewConn(rawConn)
+	}
+	if remoteConn == nil {
 		logs.Error("Get conn failed: %v", err)
 		return nil
 	}
-	remoteConn := conn.NewConn(c)
 	defer func() { _ = remoteConn.Close() }()
 	mgr.mu.Lock()
 	uuid := mgr.uuid
@@ -673,40 +674,34 @@ func (mgr *P2PManager) newUdpConn(localAddr string, cfg *config.CommonConfig, l 
 		}
 		return nil
 	}
-	rAddrBuf, err := remoteConn.GetShortLenContent()
-	if err != nil {
-		logs.Error("Target client is offline or tunnel config not found: %v", err)
-		if AutoReconnect {
-			time.Sleep(5 * time.Second)
-		} else {
-			mgr.pCancel()
-		}
-		return nil
-	}
-	rAddr := string(rAddrBuf)
-	remoteIP := net.ParseIP(common.GetIpByAddr(remoteConn.RemoteAddr().String()))
-	if remoteIP != nil && (remoteIP.IsPrivate() || remoteIP.IsLoopback() || remoteIP.IsLinkLocalUnicast()) {
-		rAddr = common.BuildAddress(remoteIP.String(), strconv.Itoa(common.GetPortByAddr(rAddr)))
-	}
 
-	if !common.IsSameIPType(localAddr, rAddr) {
-		logs.Debug("IP type mismatch local=%s remote=%s", localAddr, rAddr)
-		//return
-	}
-	//logs.Debug("localAddr is %s, rAddr is %s", localAddr, rAddr)
-
-	var remoteAddr, role, mode, data string
+	var remoteAddr, sessionID, role, mode, data string
+	var transportTimeout time.Duration
 	var localConn net.PacketConn
-	localConn, remoteAddr, localAddr, role, mode, data, err = p2p.HandleUDP(mgr.ctx, localAddr, rAddr, crypt.Md5(l.Password), common.WORK_P2P_VISITOR, P2PMode, "")
+	localConn, remoteAddr, localAddr, sessionID, role, mode, data, transportTimeout, err = p2p.RunVisitorSession(mgr.ctx, remoteConn, localAddr, P2PMode, "", p2p.ParseSTUNServerList(cfg.P2PStunServers))
 	if err != nil {
-		logs.Error("Handle P2P failed: %v", err)
+		logs.Error("Run visitor P2P session failed: %v", err)
 		return err
 	}
-	if mode == "" || mode != P2PMode {
+	if transportTimeout <= 0 {
+		transportTimeout = 10 * time.Second
+	}
+	if mode == "" {
 		mode = common.CONN_KCP
 	}
-	logs.Debug("handleP2PUdp result local=%s remote=%s role=%s mode=%s data=%s", localAddr, remoteAddr, role, mode, data)
-	//logs.Debug("handleP2PUdp ok")
+	_ = p2p.WritePunchProgress(remoteConn, p2p.P2PPunchProgress{
+		SessionID:  sessionID,
+		Role:       role,
+		Stage:      "transport_start",
+		Status:     "ok",
+		LocalAddr:  localAddr,
+		RemoteAddr: remoteAddr,
+		Detail:     mode,
+		Meta: map[string]string{
+			"transport_mode": mode,
+		},
+	})
+	logs.Debug("visitor p2p result local=%s remote=%s role=%s mode=%s data=%s", localAddr, remoteAddr, role, mode, data)
 
 	var udpTunnel net.Conn
 	var sess *quic.Conn
@@ -714,26 +709,64 @@ func (mgr *P2PManager) newUdpConn(localAddr string, cfg *config.CommonConfig, l 
 	rUDPAddr, err := net.ResolveUDPAddr("udp", remoteAddr)
 	if err != nil {
 		logs.Error("Failed to resolve remote UDP addr: %v", err)
+		_ = p2p.WritePunchProgress(remoteConn, p2p.P2PPunchProgress{
+			SessionID:  sessionID,
+			Role:       role,
+			Stage:      "transport_fail_stage",
+			Status:     "fail",
+			LocalAddr:  localAddr,
+			RemoteAddr: remoteAddr,
+			Detail:     "resolve_remote",
+		})
 		_ = localConn.Close()
 		return nil
 	}
 
 	if mode == common.CONN_QUIC {
-		sess, err = quic.Dial(mgr.ctx, localConn, rUDPAddr, TlsCfg, QuicConfig)
+		dialCtx, cancelDial := context.WithTimeout(mgr.ctx, transportTimeout)
+		sess, err = quic.Dial(dialCtx, localConn, rUDPAddr, TlsCfg, QuicConfig)
+		cancelDial()
 		if err != nil {
 			logs.Error("QUIC dial error: %v", err)
+			_ = p2p.WritePunchProgress(remoteConn, p2p.P2PPunchProgress{
+				SessionID:  sessionID,
+				Role:       role,
+				Stage:      "transport_fail_stage",
+				Status:     "fail",
+				LocalAddr:  localAddr,
+				RemoteAddr: remoteAddr,
+				Detail:     "quic_dial",
+			})
 			_ = localConn.Close()
 			return nil
 		}
 		state := sess.ConnectionState().TLS
 		if len(state.PeerCertificates) == 0 {
 			logs.Error("Failed to get QUIC certificate")
+			_ = p2p.WritePunchProgress(remoteConn, p2p.P2PPunchProgress{
+				SessionID:  sessionID,
+				Role:       role,
+				Stage:      "transport_fail_stage",
+				Status:     "fail",
+				LocalAddr:  localAddr,
+				RemoteAddr: remoteAddr,
+				Detail:     "quic_cert_missing",
+			})
 			_ = localConn.Close()
 			return nil
 		}
 		leaf := state.PeerCertificates[0]
 		if data != string(crypt.GetHMAC(cfg.VKey, leaf.Raw)) {
 			logs.Error("Failed to verify QUIC certificate")
+			_ = p2p.WritePunchProgress(remoteConn, p2p.P2PPunchProgress{
+				SessionID:  sessionID,
+				Role:       role,
+				Stage:      "transport_fail_stage",
+				Status:     "fail",
+				LocalAddr:  localAddr,
+				RemoteAddr: remoteAddr,
+				Detail:     "quic_cert_verify",
+			})
 			_ = localConn.Close()
 			return nil
 		}
@@ -741,11 +774,29 @@ func (mgr *P2PManager) newUdpConn(localAddr string, cfg *config.CommonConfig, l 
 		kcpTunnel, err := conn.NewKCPSessionWithConn(rUDPAddr, localConn)
 		if err != nil {
 			logs.Warn("KCP create failed: %v", err)
+			_ = p2p.WritePunchProgress(remoteConn, p2p.P2PPunchProgress{
+				SessionID:  sessionID,
+				Role:       role,
+				Stage:      "transport_fail_stage",
+				Status:     "fail",
+				LocalAddr:  localAddr,
+				RemoteAddr: remoteAddr,
+				Detail:     "kcp_create",
+			})
 			_ = localConn.Close()
 			return nil
 		}
 		udpTunnel = kcpTunnel
 	}
+	_ = p2p.WritePunchProgress(remoteConn, p2p.P2PPunchProgress{
+		SessionID:  sessionID,
+		Role:       role,
+		Stage:      "transport_established",
+		Status:     "ok",
+		LocalAddr:  localAddr,
+		RemoteAddr: remoteAddr,
+		Detail:     mode,
+	})
 
 	logs.Info("P2P UDP[%s] tunnel established to %s, role[%s]", mode, remoteAddr, role)
 
