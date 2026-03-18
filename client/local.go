@@ -55,21 +55,21 @@ type P2pBridge struct {
 }
 
 func NewP2pBridge(mgr *P2PManager, l *config.LocalServer) *P2pBridge {
-	var p2p, secret bool
+	var useP2P, secret bool
 	timeout := time.Second * 5
 	if l.Type != "secret" && !DisableP2P {
-		p2p = true
+		useP2P = true
 		secret = l.Fallback
 	} else {
 		secret = true
 	}
-	if secret && p2p {
+	if secret && useP2P {
 		timeout = 3 * time.Second
 	}
 	return &P2pBridge{
 		mgr:     mgr,
 		local:   l,
-		p2p:     p2p,
+		p2p:     useP2P,
 		secret:  secret,
 		timeout: timeout,
 	}
@@ -181,15 +181,19 @@ func (b *P2pBridge) sendViaQUIC(link *conn.Link, qConn *quic.Conn, idle time.Dur
 		return nil, err
 	}
 	nc := conn.NewQuicStreamConn(stream, qConn)
+	sendOK := false
+	defer func() {
+		if !sendOK {
+			_ = nc.Close()
+		}
+	}()
 	if _, err := conn.NewConn(nc).SendInfo(link, ""); err != nil {
-		_ = nc.Close()
 		logs.Trace("QUIC SendInfo failed, retrying: %v", err)
 		mgr.resetStatus(false)
 		return nil, err
 	}
 	if link.Option.NeedAck {
 		if err := conn.ReadACK(nc, b.timeout); err != nil {
-			_ = nc.Close()
 			logs.Trace("QUIC ReadACK failed, retrying: %v", err)
 			mgr.resetStatus(false)
 			return nil, err
@@ -199,6 +203,7 @@ func (b *P2pBridge) sendViaQUIC(link *conn.Link, qConn *quic.Conn, idle time.Dur
 		mgr.mu.Unlock()
 	}
 	mgr.resetStatus(true)
+	sendOK = true
 	return nc, nil
 }
 
@@ -211,13 +216,19 @@ func (b *P2pBridge) sendViaKCP(link *conn.Link, session *mux.Mux) (net.Conn, err
 		return nil, err
 	}
 	link.Option.NeedAck = false
+	sendOK := false
+	defer func() {
+		if !sendOK {
+			_ = nowConn.Close()
+		}
+	}()
 	if _, err := conn.NewConn(nowConn).SendInfo(link, ""); err != nil {
-		_ = nowConn.Close()
 		logs.Trace("KCP SendInfo failed, retrying: %v", err)
 		mgr.resetStatus(false)
 		return nil, err
 	}
 	mgr.resetStatus(true)
+	sendOK = true
 	return nowConn, nil
 }
 
@@ -233,23 +244,27 @@ func (b *P2pBridge) sendViaSecret(link *conn.Link) (net.Conn, error) {
 		}
 		return nil, err
 	}
+	sendOK := false
+	defer func() {
+		if !sendOK {
+			_ = sc.Close()
+		}
+	}()
 	if _, err := sc.Write([]byte(crypt.Md5(b.local.Password))); err != nil {
 		logs.Error("secret write password failed: %v", err)
-		_ = sc.Close()
 		return nil, err
 	}
 	if _, err := conn.NewConn(sc).SendInfo(link, ""); err != nil {
-		_ = sc.Close()
 		logs.Trace("Secret SendInfo failed, retrying: %v", err)
 		return nil, err
 	}
 	if link.Option.NeedAck {
 		if err := conn.ReadACK(sc, b.timeout); err != nil {
-			_ = sc.Close()
 			logs.Trace("Secret ReadACK failed, retrying: %v", err)
 			return nil, err
 		}
 	}
+	sendOK = true
 	return sc, nil
 }
 

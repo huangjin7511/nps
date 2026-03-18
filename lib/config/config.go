@@ -404,7 +404,7 @@ func delLocalService(s string) *LocalServer {
 
 func getAllTitle(content string) (arr []string, err error) {
 	var re *regexp.Regexp
-	re, err = regexp.Compile(`(?m)^\[[^\[\]\r\n]+\]`)
+	re, err = regexp.Compile(`(?m)^\[[^]\r\n[]+\]$`)
 	if err != nil {
 		return
 	}

@@ -671,16 +671,16 @@ func samplePortDiffs(samples []ProbeSample) []int {
 }
 
 func minPositive(values []int) int {
-	min := 0
+	minValue := 0
 	for _, value := range values {
 		if value <= 0 {
 			continue
 		}
-		if min == 0 || value < min {
-			min = value
+		if minValue == 0 || value < minValue {
+			minValue = value
 		}
 	}
-	return min
+	return minValue
 }
 
 func medianPositive(values []int) int {
