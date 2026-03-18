@@ -86,12 +86,12 @@ const (
 
 const (
 	succeeded uint8 = iota
-	_
+	serverFailure
 	notAllowed
-	_
-	_
-	_
-	_
+	networkUnreachable
+	hostUnreachable
+	connectionRefused
+	ttlExpired
 	commandNotSupported
 	addrTypeNotSupported
 )
