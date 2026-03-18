@@ -319,30 +319,30 @@ func NewTunnelByHost(host *Host, port int) *Tunnel {
 	}
 }
 
-func (s *Tunnel) Update(t *Tunnel) {
-	s.ServerIp = t.ServerIp
-	s.Mode = t.Mode
-	s.Password = t.Password
-	s.Remark = t.Remark
-	s.TargetType = t.TargetType
-	s.HttpProxy = t.HttpProxy
-	s.Socks5Proxy = t.Socks5Proxy
-	s.DestAclMode = t.DestAclMode
-	s.DestAclRules = t.DestAclRules
-	s.DestAclSet = t.DestAclSet
-	s.LocalPath = t.LocalPath
-	s.StripPre = t.StripPre
-	s.ReadOnly = t.ReadOnly
-	s.Target = t.Target
-	s.MultiAccount = t.MultiAccount
+func (t *Tunnel) Update(other *Tunnel) {
+	t.ServerIp = other.ServerIp
+	t.Mode = other.Mode
+	t.Password = other.Password
+	t.Remark = other.Remark
+	t.TargetType = other.TargetType
+	t.HttpProxy = other.HttpProxy
+	t.Socks5Proxy = other.Socks5Proxy
+	t.DestAclMode = other.DestAclMode
+	t.DestAclRules = other.DestAclRules
+	t.DestAclSet = other.DestAclSet
+	t.LocalPath = other.LocalPath
+	t.StripPre = other.StripPre
+	t.ReadOnly = other.ReadOnly
+	t.Target = other.Target
+	t.MultiAccount = other.MultiAccount
 }
 
-func (s *Tunnel) AddConn() {
-	atomic.AddInt32(&s.NowConn, 1)
+func (t *Tunnel) AddConn() {
+	atomic.AddInt32(&t.NowConn, 1)
 }
 
-func (s *Tunnel) CutConn() {
-	atomic.AddInt32(&s.NowConn, -1)
+func (t *Tunnel) CutConn() {
+	atomic.AddInt32(&t.NowConn, -1)
 }
 
 type Health struct {

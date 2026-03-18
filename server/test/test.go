@@ -10,7 +10,7 @@ import (
 	"github.com/djylb/nps/lib/file"
 )
 
-func TestServerConfig() {
+func checkServerConfig() {
 	var postTcpArr []int
 	var postUdpArr []int
 	file.GetDb().JsonDb.Tasks.Range(func(key, value interface{}) bool {
@@ -26,9 +26,8 @@ func TestServerConfig() {
 	p, err := beego.AppConfig.Int("web_port")
 	if err != nil {
 		log.Fatalln("Getting web management port error :", err)
-	} else {
-		isInArr(&postTcpArr, p, "Web Management port", "tcp")
 	}
+	isInArr(&postTcpArr, p, "Web Management port", "tcp")
 
 	if p := beego.AppConfig.String("bridge_port"); p != "" {
 		if port, err := strconv.Atoi(p); err != nil {

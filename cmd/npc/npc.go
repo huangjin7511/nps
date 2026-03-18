@@ -1,10 +1,10 @@
 //go:build !sdk
-// +build !sdk
 
 package main
 
 import (
 	"context"
+	goflag "flag"
 	"fmt"
 	"os"
 	"os/exec"
@@ -26,9 +26,6 @@ import (
 	"github.com/djylb/nps/lib/version"
 	"github.com/kardianos/service"
 	pionstun "github.com/pion/stun/v3"
-
-	goflag "flag"
-
 	flag "github.com/spf13/pflag"
 )
 
@@ -274,7 +271,7 @@ func main() {
 	case "install":
 		_ = service.Control(s, "stop")
 		_ = service.Control(s, "uninstall")
-		install.InstallNpc()
+		install.NPC()
 		if err := service.Control(s, os.Args[1]); err != nil {
 			logs.Error("Valid actions: %q error: %v", service.ControlAction, err)
 		}

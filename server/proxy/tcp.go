@@ -68,6 +68,8 @@ func (s *TunnelModeServer) DialVirtual(rAddr string) (net.Conn, error) {
 	a, b := net.Pipe()
 	c, err := conn.NewAddrOverrideConn(b, rAddr, s.address)
 	if err != nil {
+		_ = a.Close()
+		_ = b.Close()
 		return nil, err
 	}
 	go s.handleConn(c)

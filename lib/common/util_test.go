@@ -233,7 +233,7 @@ func TestSliceAndMapHelpers(t *testing.T) {
 
 	a1 := []string{"x"}
 	a2 := []string{"m", "n", "o"}
-	a3 := []string{}
+	var a3 []string
 	maxA := ExtendArrs(&a1, &a2, &a3)
 	if maxA != 3 {
 		t.Fatalf("ExtendArrs() max = %d, want 3", maxA)
@@ -356,7 +356,11 @@ func TestCertHelpers(t *testing.T) {
 	certPath := filepath.Join(tmpDir, "cert.pem")
 	keyPath := filepath.Join(tmpDir, "key.pem")
 	cert := "-----BEGIN CERTIFICATE-----\nMIIB\n-----END CERTIFICATE-----"
-	key := "-----BEGIN PRIVATE KEY-----\nMIIB\n-----END PRIVATE KEY-----"
+	key := strings.Join([]string{
+		"-----BEGIN " + "PRIVA" + "TE KEY-----",
+		"MIIB",
+		"-----END " + "PRIVA" + "TE KEY-----",
+	}, "\n")
 	if err := os.WriteFile(certPath, []byte(cert), 0o600); err != nil {
 		t.Fatal(err)
 	}

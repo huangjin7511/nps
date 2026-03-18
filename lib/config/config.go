@@ -51,58 +51,57 @@ func NewConfig(path string) (c *Config, err error) {
 	var b []byte
 	if b, err = common.ReadAllFromFile(path); err != nil {
 		return
-	} else {
-		if c.content, err = common.ParseStr(string(b)); err != nil {
-			return nil, err
+	}
+	if c.content, err = common.ParseStr(string(b)); err != nil {
+		return nil, err
+	}
+	if c.title, err = getAllTitle(c.content); err != nil {
+		return
+	}
+	var nowIndex int
+	var nextIndex int
+	var nowContent string
+	for i := 0; i < len(c.title); i++ {
+		nowIndex = strings.Index(c.content, c.title[i]) + len(c.title[i])
+		if i < len(c.title)-1 {
+			nextIndex = strings.Index(c.content, c.title[i+1])
+		} else {
+			nextIndex = len(c.content)
 		}
-		if c.title, err = getAllTitle(c.content); err != nil {
-			return
+		nowContent = c.content[nowIndex:nextIndex]
+		nowContent = stripCommentLines(nowContent)
+		if strings.HasPrefix(getTitleContent(c.title[i]), "secret") && !strings.Contains(nowContent, "mode") {
+			local := delLocalService(nowContent)
+			local.Type = "secret"
+			c.LocalServer = append(c.LocalServer, local)
+			continue
 		}
-		var nowIndex int
-		var nextIndex int
-		var nowContent string
-		for i := 0; i < len(c.title); i++ {
-			nowIndex = strings.Index(c.content, c.title[i]) + len(c.title[i])
-			if i < len(c.title)-1 {
-				nextIndex = strings.Index(c.content, c.title[i+1])
-			} else {
-				nextIndex = len(c.content)
+		if strings.HasPrefix(getTitleContent(c.title[i]), "p2p") && !strings.Contains(nowContent, "mode") {
+			local := delLocalService(nowContent)
+			if local.Type == "" {
+				local.Type = "p2p"
 			}
-			nowContent = c.content[nowIndex:nextIndex]
-			nowContent = stripCommentLines(nowContent)
-			if strings.HasPrefix(getTitleContent(c.title[i]), "secret") && !strings.Contains(nowContent, "mode") {
-				local := delLocalService(nowContent)
-				local.Type = "secret"
-				c.LocalServer = append(c.LocalServer, local)
+			c.LocalServer = append(c.LocalServer, local)
+			continue
+		}
+		//health set
+		if strings.HasPrefix(getTitleContent(c.title[i]), "health") {
+			c.Healths = append(c.Healths, dealHealth(nowContent))
+			continue
+		}
+		switch c.title[i] {
+		case "[common]":
+			c.CommonConfig = dealCommon(nowContent)
+		default:
+			if strings.Contains(nowContent, "host") {
+				h := dealHost(nowContent)
+				h.Remark = getTitleContent(c.title[i])
+				c.Hosts = append(c.Hosts, h)
 				continue
 			}
-			if strings.HasPrefix(getTitleContent(c.title[i]), "p2p") && !strings.Contains(nowContent, "mode") {
-				local := delLocalService(nowContent)
-				if local.Type == "" {
-					local.Type = "p2p"
-				}
-				c.LocalServer = append(c.LocalServer, local)
-				continue
-			}
-			//health set
-			if strings.HasPrefix(getTitleContent(c.title[i]), "health") {
-				c.Healths = append(c.Healths, dealHealth(nowContent))
-				continue
-			}
-			switch c.title[i] {
-			case "[common]":
-				c.CommonConfig = dealCommon(nowContent)
-			default:
-				if strings.Contains(nowContent, "host") {
-					h := dealHost(nowContent)
-					h.Remark = getTitleContent(c.title[i])
-					c.Hosts = append(c.Hosts, h)
-				} else {
-					t := dealTunnel(nowContent)
-					t.Remark = getTitleContent(c.title[i])
-					c.Tasks = append(c.Tasks, t)
-				}
-			}
+			t := dealTunnel(nowContent)
+			t.Remark = getTitleContent(c.title[i])
+			c.Tasks = append(c.Tasks, t)
 		}
 	}
 	return
@@ -404,7 +403,7 @@ func delLocalService(s string) *LocalServer {
 
 func getAllTitle(content string) (arr []string, err error) {
 	var re *regexp.Regexp
-	re, err = regexp.Compile(`(?m)^\[[^]\r\n[]+\]$`)
+	re, err = regexp.Compile(`(?m)^\[[^\r\n\[\]]+]$`)
 	if err != nil {
 		return
 	}

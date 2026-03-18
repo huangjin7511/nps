@@ -385,11 +385,10 @@ ExecPath:
 		if _, err := copyFile(filepath.Join(srcPath, bin), "/usr/bin/"+bin); err != nil {
 			if _, err := copyFile(filepath.Join(srcPath, bin), "/usr/local/bin/"+bin); err != nil {
 				log.Fatalln(err)
-			} else {
-				_, _ = copyFile(filepath.Join(srcPath, bin), "/usr/local/bin/"+bin+"-update")
-				chMod("/usr/local/bin/"+bin+"-update", 0755)
-				binPath = "/usr/local/bin/" + bin
 			}
+			_, _ = copyFile(filepath.Join(srcPath, bin), "/usr/local/bin/"+bin+"-update")
+			chMod("/usr/local/bin/"+bin+"-update", 0755)
+			binPath = "/usr/local/bin/" + bin
 		} else {
 			_, _ = copyFile(filepath.Join(srcPath, bin), "/usr/bin/"+bin+"-update")
 			chMod("/usr/bin/"+bin+"-update", 0755)
@@ -403,7 +402,7 @@ ExecPath:
 	return binPath
 }
 
-func InstallNpc() {
+func NPC() {
 	path := common.GetInstallPath()
 	if !common.FileExists(path) {
 		err := os.MkdirAll(path, 0755)
@@ -414,7 +413,7 @@ func InstallNpc() {
 	copyStaticFile(common.GetAppPath(), "npc")
 }
 
-func InstallNps() string {
+func NPS() string {
 	path := common.GetInstallPath()
 	log.Println("install path:" + path)
 	if common.FileExists(path) {

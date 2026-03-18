@@ -124,14 +124,22 @@ func (s *Mux) isAliveTimeout(now time.Time) bool {
 	return now.Sub(time.Unix(0, last)) > s.pingTimeout
 }
 
+func normalizedPingJitter() time.Duration {
+	if PingJitter < 0 {
+		return -PingJitter
+	}
+	return PingJitter
+}
+
 func nextPingDelay() time.Duration {
 	if PingInterval <= 0 {
 		return time.Second
 	}
-	if PingJitter <= 0 {
+	jitter := normalizedPingJitter()
+	if jitter == 0 {
 		return PingInterval
 	}
-	j := time.Duration(rand.Int63n(int64(PingJitter))) - PingJitter/2
+	j := time.Duration(rand.Int63n(int64(jitter))) - jitter/2
 	next := PingInterval + j
 	if next <= 0 {
 		return PingInterval

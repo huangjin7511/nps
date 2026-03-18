@@ -40,7 +40,10 @@ func (c *TimeoutConn) refreshDeadline() {
 }
 
 func NewTimeoutTLSConn(raw net.Conn, cfg *tls.Config, idle, handshakeTimeout time.Duration) (net.Conn, error) {
-	_ = raw.SetDeadline(time.Now().Add(handshakeTimeout))
+	if err := raw.SetDeadline(time.Now().Add(handshakeTimeout)); err != nil {
+		_ = raw.Close()
+		return nil, err
+	}
 	tlsConn := tls.Client(raw, cfg)
 	if err := tlsConn.Handshake(); err != nil {
 		_ = raw.Close()

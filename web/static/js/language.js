@@ -188,7 +188,7 @@ var chartdatas = {};
 var postsubmit;
 
 function langreply(langstr) {
-    var langobj = languages['content']['reply'][langstr.replace(/[\s,\.\?]*/g, "").toLowerCase()];
+    var langobj = languages['content']['reply'][langstr.replace(/[\s,.?]*/g, "").toLowerCase()];
     if ($.type(langobj) == 'undefined') return langstr
     langobj = (langobj[languages['current']] || langobj[languages['default']] || langstr);
     return langobj

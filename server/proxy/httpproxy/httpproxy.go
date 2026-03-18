@@ -37,6 +37,8 @@ type HttpProxy struct {
 	Http3PortStr          string
 	Http3Bridge           bool
 	ErrorAlways           bool
+	TimeLimitErrorContent []byte
+	FlowLimitErrorContent []byte
 	ForceAutoSsl          bool
 	Magic                 *certmagic.Config
 	Acme                  *certmagic.ACMEIssuer
@@ -68,6 +70,8 @@ func (s *HttpProxy) Start() error {
 	if err != nil {
 		s.ErrorContent = []byte("nps 404")
 	}
+	s.TimeLimitErrorContent = s.loadOptionalErrorPage("error_page_time_limit")
+	s.FlowLimitErrorContent = s.loadOptionalErrorPage("error_page_flow_limit")
 	s.ErrorAlways = beego.AppConfig.DefaultBool("error_always", false)
 
 	if s.Bridge.IsServer() {
@@ -168,6 +172,20 @@ func (s *HttpProxy) Start() error {
 		}
 	}
 	return nil
+}
+
+func (s *HttpProxy) loadOptionalErrorPage(configKey string) []byte {
+	path := strings.TrimSpace(beego.AppConfig.String(configKey))
+	if path == "" {
+		return nil
+	}
+
+	content, err := common.ReadAllFromFile(common.ResolvePath(path))
+	if err != nil {
+		logs.Warn("Failed to load %s from %s: %v", configKey, path, err)
+		return nil
+	}
+	return content
 }
 
 func (s *HttpProxy) Close() error {

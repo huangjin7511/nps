@@ -20,7 +20,7 @@ type TrafficControl struct {
 	params []string
 }
 
-func Ips() (map[string]string, error) {
+func listIPs() (map[string]string, error) {
 
 	ips := make(map[string]string)
 
@@ -147,23 +147,23 @@ func (tc *TrafficControl) getTestVariable() []tcFunc {
 
 // this command sets the transmission of the network card to delayVal. At the same time,
 // about waveRatio of the packets will be delayed by ± wave.
-func (tc *TrafficControl) delay(opt, delayVal, wave, waveRatio string) {
+func (tc *TrafficControl) delay(_ string, delayVal, wave, waveRatio string) {
 	tc.params = append(tc.params, []string{"delay", delayVal, wave, waveRatio}...)
 }
 
 // this command sets the transmission of the network card to randomly drop lossRatio of packets with a success rate of lossSuccessRatio.
-func (tc *TrafficControl) loss(opt, lossRatio, lossSuccessRatio string) {
+func (tc *TrafficControl) loss(_ string, lossRatio, lossSuccessRatio string) {
 	tc.params = append(tc.params, []string{"loss", lossRatio, lossSuccessRatio}...)
 }
 
 // this command sets the transmission of the network card to randomly generate repeatRatio duplicate packets
-func (tc *TrafficControl) duplicate(opt, duplicateRatio string) {
+func (tc *TrafficControl) duplicate(_ string, duplicateRatio string) {
 	tc.params = append(tc.params, []string{"duplicate", duplicateRatio}...)
 }
 
 // this command sets the transmission of the network card to randomly generate corruptRatio corrupted packets.
 // the kernel version must be above 2.6.16
-func (tc *TrafficControl) corrupt(opt, corruptRatio string) {
+func (tc *TrafficControl) corrupt(_ string, corruptRatio string) {
 	tc.params = append(tc.params, []string{"corrupt", corruptRatio}...)
 }
 

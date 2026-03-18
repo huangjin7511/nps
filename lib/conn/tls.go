@@ -19,6 +19,7 @@ func NewTlsConn(rawConn net.Conn, timeout time.Duration, tlsConfig *tls.Config) 
 
 	err := rawConn.SetDeadline(time.Now().Add(timeout))
 	if err != nil {
+		_ = rawConn.Close()
 		return nil, fmt.Errorf("failed to set deadline for rawConn: %w", err)
 	}
 

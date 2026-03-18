@@ -1,6 +1,7 @@
 package main
 
 import (
+	goflag "flag"
 	"log"
 	"os"
 	"os/exec"
@@ -24,8 +25,6 @@ import (
 	"github.com/djylb/nps/server/tool"
 	"github.com/djylb/nps/web/routers"
 	"github.com/kardianos/service"
-
-	goflag "flag"
 	flag "github.com/spf13/pflag"
 )
 
@@ -167,7 +166,7 @@ func main() {
 			_ = service.Control(s, "stop")
 			_ = service.Control(s, "uninstall")
 
-			binPath := install.InstallNps()
+			binPath := install.NPS()
 			svcConfig.Executable = binPath
 			s, err := service.New(prg, svcConfig)
 			if err != nil {

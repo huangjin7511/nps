@@ -46,6 +46,7 @@ func GetTlsConn(c net.Conn, sni string) (net.Conn, error) {
 	tlsConn := tls.Client(c, tlsConf)
 	if err := tlsConn.Handshake(); err != nil {
 		logs.Error("TLS handshake with backend failed: %v", err)
+		_ = c.Close()
 		return nil, err
 	}
 	return tlsConn, nil
@@ -388,21 +389,7 @@ func normalizeTarget(src, dst net.Addr) net.Addr {
 		if d == nil {
 			d = &net.TCPAddr{Port: 0}
 		}
-		srcIsV4 := s.IP.To4() != nil
-		dstIsV4 := d.IP != nil && d.IP.To4() != nil
-
-		switch {
-		case srcIsV4 && !dstIsV4:
-			d.IP = net.IPv4zero
-		case !srcIsV4 && dstIsV4:
-			d.IP = append(net.IPv6zero[:12], d.IP.To4()...)
-		case d.IP == nil || d.IP.IsUnspecified():
-			if srcIsV4 {
-				d.IP = net.IPv4zero
-			} else {
-				d.IP = net.IPv6zero
-			}
-		}
+		d.IP = normalizeTargetIP(s.IP, d.IP)
 		return d
 
 	// UDP
@@ -411,26 +398,31 @@ func normalizeTarget(src, dst net.Addr) net.Addr {
 		if d == nil {
 			d = &net.UDPAddr{Port: 0}
 		}
-		srcIsV4 := s.IP.To4() != nil
-		dstIsV4 := d.IP != nil && d.IP.To4() != nil
-
-		switch {
-		case srcIsV4 && !dstIsV4:
-			d.IP = net.IPv4zero
-		case !srcIsV4 && dstIsV4:
-			d.IP = append(net.IPv6zero[:12], d.IP.To4()...)
-		case d.IP == nil || d.IP.IsUnspecified():
-			if srcIsV4 {
-				d.IP = net.IPv4zero
-			} else {
-				d.IP = net.IPv6zero
-			}
-		}
+		d.IP = normalizeTargetIP(s.IP, d.IP)
 		return d
 
 	// Other
 	default:
 		return dst
+	}
+}
+
+func normalizeTargetIP(srcIP, dstIP net.IP) net.IP {
+	srcIsV4 := srcIP.To4() != nil
+	dstIsV4 := dstIP != nil && dstIP.To4() != nil
+
+	switch {
+	case srcIsV4 && !dstIsV4:
+		return net.IPv4zero
+	case !srcIsV4 && dstIsV4:
+		return append(net.IPv6zero[:12], dstIP.To4()...)
+	case dstIP == nil || dstIP.IsUnspecified():
+		if srcIsV4 {
+			return net.IPv4zero
+		}
+		return net.IPv6zero
+	default:
+		return dstIP
 	}
 }
 

@@ -211,7 +211,7 @@ func ajaxWithId(str string, status int, id int) map[string]interface{} {
 	return json
 }
 
-func (s *BaseController) AjaxTable(list interface{}, cnt int, recordsTotal int, kwargs map[string]interface{}) {
+func (s *BaseController) AjaxTable(list interface{}, _ int, recordsTotal int, kwargs map[string]interface{}) {
 	json := make(map[string]interface{})
 	json["rows"] = list
 	json["total"] = recordsTotal

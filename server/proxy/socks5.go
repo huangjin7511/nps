@@ -31,6 +31,45 @@ func readLenPrefixedString(r io.Reader) (string, error) {
 	return string(b), nil
 }
 
+func readSocks5Destination(r io.Reader) (string, uint16, error) {
+	var addrType [1]byte
+	if _, err := io.ReadFull(r, addrType[:]); err != nil {
+		return "", 0, err
+	}
+
+	host, err := readSocks5Host(r, addrType[0])
+	if err != nil {
+		return "", 0, err
+	}
+
+	var port uint16
+	if err := binary.Read(r, binary.BigEndian, &port); err != nil {
+		return "", 0, err
+	}
+	return host, port, nil
+}
+
+func readSocks5Host(r io.Reader, addrType byte) (string, error) {
+	switch addrType {
+	case ipV4:
+		ipv4 := make(net.IP, net.IPv4len)
+		if _, err := io.ReadFull(r, ipv4); err != nil {
+			return "", err
+		}
+		return ipv4.String(), nil
+	case ipV6:
+		ipv6 := make(net.IP, net.IPv6len)
+		if _, err := io.ReadFull(r, ipv6); err != nil {
+			return "", err
+		}
+		return ipv6.String(), nil
+	case domainName:
+		return readLenPrefixedString(r)
+	default:
+		return "", errors.New("unsupported address type")
+	}
+}
+
 const (
 	ipV4            = 1
 	domainName      = 3
@@ -47,12 +86,12 @@ const (
 
 const (
 	succeeded uint8 = iota
-	serverFailure
+	_
 	notAllowed
-	networkUnreachable
-	hostUnreachable
-	connectionRefused
-	ttlExpired
+	_
+	_
+	_
+	_
 	commandNotSupported
 	addrTypeNotSupported
 )
@@ -128,41 +167,8 @@ func (s *TunnelModeServer) sendReply(c net.Conn, rep uint8) {
 
 // CONNECT command handler: parse target and bridge TCP through DealClient.
 func (s *TunnelModeServer) handleConnect(c net.Conn) {
-	var addrType [1]byte
-	if _, err := io.ReadFull(c, addrType[:]); err != nil {
-		s.sendReply(c, addrTypeNotSupported)
-		return
-	}
-	var host string
-	switch addrType[0] {
-	case ipV4:
-		ipv4 := make(net.IP, net.IPv4len)
-		if _, err := io.ReadFull(c, ipv4); err != nil {
-			s.sendReply(c, addrTypeNotSupported)
-			return
-		}
-		host = ipv4.String()
-	case ipV6:
-		ipv6 := make(net.IP, net.IPv6len)
-		if _, err := io.ReadFull(c, ipv6); err != nil {
-			s.sendReply(c, addrTypeNotSupported)
-			return
-		}
-		host = ipv6.String()
-	case domainName:
-		domain, err := readLenPrefixedString(c)
-		if err != nil {
-			s.sendReply(c, addrTypeNotSupported)
-			return
-		}
-		host = domain
-	default:
-		s.sendReply(c, addrTypeNotSupported)
-		return
-	}
-
-	var port uint16
-	if err := binary.Read(c, binary.BigEndian, &port); err != nil {
+	host, port, err := readSocks5Destination(c)
+	if err != nil {
 		s.sendReply(c, addrTypeNotSupported)
 		return
 	}
@@ -262,40 +268,8 @@ func (s *TunnelModeServer) handleUDP(c net.Conn) {
 		return
 	}
 	defer func() { _ = c.Close() }()
-	var addrType [1]byte
-	if _, err := io.ReadFull(c, addrType[:]); err != nil {
-		s.sendReply(c, addrTypeNotSupported)
-		return
-	}
-	var host string
-	switch addrType[0] {
-	case ipV4:
-		ipv4 := make(net.IP, net.IPv4len)
-		if _, err := io.ReadFull(c, ipv4); err != nil {
-			s.sendReply(c, addrTypeNotSupported)
-			return
-		}
-		host = ipv4.String()
-	case ipV6:
-		ipv6 := make(net.IP, net.IPv6len)
-		if _, err := io.ReadFull(c, ipv6); err != nil {
-			s.sendReply(c, addrTypeNotSupported)
-			return
-		}
-		host = ipv6.String()
-	case domainName:
-		domain, err := readLenPrefixedString(c)
-		if err != nil {
-			s.sendReply(c, addrTypeNotSupported)
-			return
-		}
-		host = domain
-	default:
-		s.sendReply(c, addrTypeNotSupported)
-		return
-	}
-	var port uint16
-	if err := binary.Read(c, binary.BigEndian, &port); err != nil {
+	host, port, err := readSocks5Destination(c)
+	if err != nil {
 		s.sendReply(c, addrTypeNotSupported)
 		return
 	}
@@ -448,12 +422,11 @@ func (s *TunnelModeServer) SocksAuth(c net.Conn) error {
 			return err
 		}
 		return nil
-	} else {
-		if _, err := c.Write([]byte{userAuthVersion, authFailure}); err != nil {
-			return err
-		}
-		return errors.New("auth failed")
 	}
+	if _, err := c.Write([]byte{userAuthVersion, authFailure}); err != nil {
+		return err
+	}
+	return errors.New("auth failed")
 }
 
 func ProcessMix(c *conn.Conn, s *TunnelModeServer) error {

@@ -305,11 +305,11 @@ func (s *Conn) getInfo(t interface{}) (err error) {
 	defer common.BufPool.Put(buf)
 	if l, err = s.GetLen(); err != nil {
 		return
-	} else if _, err = s.ReadLen(l, buf); err != nil {
-		return
-	} else {
-		_ = json.Unmarshal(buf[:l], &t)
 	}
+	if _, err = s.ReadLen(l, buf); err != nil {
+		return
+	}
+	_ = json.Unmarshal(buf[:l], &t)
 	return
 }
 

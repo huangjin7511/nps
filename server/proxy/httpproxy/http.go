@@ -70,6 +70,31 @@ func (s *HttpServer) Close() error {
 	return nil
 }
 
+func (s *HttpServer) writeErrorPage(rw http.ResponseWriter, statusCode int, content []byte) {
+	rw.Header().Set("Content-Type", "text/html; charset=utf-8")
+	rw.WriteHeader(statusCode)
+	_, _ = rw.Write(content)
+}
+
+func (s *HttpServer) writeLimitErrorPage(rw http.ResponseWriter, errMsg string) bool {
+	var content []byte
+	switch {
+	case strings.Contains(errMsg, "time limit exceeded"):
+		content = s.TimeLimitErrorContent
+	case strings.Contains(errMsg, "flow limit exceeded"):
+		content = s.FlowLimitErrorContent
+	default:
+		return false
+	}
+
+	if content == nil {
+		return false
+	}
+
+	s.writeErrorPage(rw, http.StatusTooManyRequests, content)
+	return true
+}
+
 func (s *HttpServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 	// Get host
 	host, err := file.GetDb().GetInfoByHost(r.Host, r)
@@ -243,12 +268,12 @@ func (s *HttpServer) handleProxy(w http.ResponseWriter, r *http.Request) {
 				idx = strings.Index(errMsg, "Client")
 			}
 			if idx != -1 {
+				if s.writeLimitErrorPage(rw, errMsg) {
+					return
+				}
 				http.Error(rw, errMsg[idx:], http.StatusTooManyRequests)
 			} else {
-				//http.Error(rw, "502 Bad Gateway", http.StatusBadGateway)
-				w.Header().Set("Content-Type", "text/html; charset=utf-8")
-				w.WriteHeader(http.StatusBadGateway)
-				_, _ = w.Write(s.ErrorContent)
+				s.writeErrorPage(rw, http.StatusBadGateway, s.ErrorContent)
 			}
 		},
 	}
@@ -260,10 +285,7 @@ func (s *HttpServer) handleWebsocket(w http.ResponseWriter, r *http.Request, hos
 	targetAddr, err := host.Target.GetRandomTarget()
 	if err != nil {
 		logs.Warn("No backend found for host: %s Err: %v", r.Host, err)
-		//http.Error(w, "502 Bad Gateway", http.StatusBadGateway)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusBadGateway)
-		_, _ = w.Write(s.ErrorContent)
 		return
 	}
 
@@ -273,10 +295,7 @@ func (s *HttpServer) handleWebsocket(w http.ResponseWriter, r *http.Request, hos
 	targetConn, err := s.Bridge.SendLinkInfo(host.Client.Id, link, nil)
 	if err != nil {
 		logs.Info("handleWebsocket: connection to target %s failed: %v", link.Host, err)
-		//http.Error(w, "502 Bad Gateway", http.StatusBadGateway)
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusBadGateway)
-		_, _ = w.Write(s.ErrorContent)
 		return
 	}
 	rawConn := conn.GetConn(targetConn, link.Crypt, link.Compress, host.Client.Rate, true, isLocal)
@@ -305,9 +324,7 @@ func (s *HttpServer) handleWebsocket(w http.ResponseWriter, r *http.Request, hos
 		tlsConn, err := conn.GetTlsConn(netConn, sni)
 		if err != nil {
 			_ = netConn.Close()
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.WriteHeader(http.StatusBadGateway)
-			_, _ = w.Write(s.ErrorContent)
 			return
 		}
 		netConn = tlsConn
@@ -318,14 +335,14 @@ func (s *HttpServer) handleWebsocket(w http.ResponseWriter, r *http.Request, hos
 	hijacker, ok := w.(http.Hijacker)
 	if !ok {
 		_ = netConn.Close()
-		http.Error(w, "Hijacking not supported", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
 		logs.Error("handleWebsocket: Hijack not supported")
 		return
 	}
 	clientConn, clientBuf, err := hijacker.Hijack()
 	if err != nil {
 		_ = netConn.Close()
-		http.Error(w, "Hijack failed", http.StatusInternalServerError)
+		w.WriteHeader(http.StatusInternalServerError)
 		logs.Error("handleWebsocket: Hijack failed")
 		return
 	}
@@ -345,6 +362,9 @@ func (s *HttpServer) handleWebsocket(w http.ResponseWriter, r *http.Request, hos
 		_ = netConn.Close()
 		_ = clientConn.Close()
 		return
+	}
+	if resp.Body != nil {
+		defer func() { _ = resp.Body.Close() }()
 	}
 
 	if err := resp.Write(clientBuf); err != nil {
@@ -408,7 +428,7 @@ func (s *HttpServer) NewServer(port int, scheme string) *http.Server {
 	}
 }
 
-func (s *HttpServer) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
+func (s *HttpServer) DialContext(ctx context.Context, _, _ string) (net.Conn, error) {
 	//logs.Debug("DialContext: start dialing; network=%s, addr=%s, using targetAddr=%s", network, addr, targetAddr)
 	remote := ctx.Value(ctxRemoteAddr).(string)
 	h := ctx.Value(ctxHost).(*file.Host)

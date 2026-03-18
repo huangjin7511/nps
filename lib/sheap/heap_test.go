@@ -25,7 +25,7 @@ func TestIntHeap_MinOrderAndPushPop(t *testing.T) {
 }
 
 func TestIntHeap_SwapLessAndLen(t *testing.T) {
-	h := IntHeap{10, 20}
+	h := &IntHeap{10, 20}
 
 	if h.Len() != 2 {
 		t.Fatalf("unexpected Len(): %d", h.Len())
@@ -35,7 +35,7 @@ func TestIntHeap_SwapLessAndLen(t *testing.T) {
 	}
 
 	h.Swap(0, 1)
-	if h[0] != 20 || h[1] != 10 {
+	if (*h)[0] != 20 || (*h)[1] != 10 {
 		t.Fatalf("Swap did not swap elements, heap=%v", h)
 	}
 }

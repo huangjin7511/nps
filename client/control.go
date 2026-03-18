@@ -373,8 +373,11 @@ func NewConn(tp string, vkey string, server string, proxyUrl string, localIP str
 		}
 		urlStr := "ws://" + server + path
 		//logs.Debug("URL: %s", urlStr)
-		wsConn, _, err := conn.DialWS(rawConn, urlStr, host, timeout)
+		wsConn, resp, err := conn.DialWS(rawConn, urlStr, host, timeout)
 		if err != nil {
+			if resp != nil && resp.Body != nil {
+				_ = resp.Body.Close()
+			}
 			_ = rawConn.Close()
 			return nil, "", err
 		}
@@ -387,8 +390,11 @@ func NewConn(tp string, vkey string, server string, proxyUrl string, localIP str
 		if err != nil {
 			return nil, "", err
 		}
-		wsConn, _, err := conn.DialWSS(rawConn, urlStr, host, sni, timeout)
+		wsConn, resp, err := conn.DialWSS(rawConn, urlStr, host, sni, timeout)
 		if err != nil {
+			if resp != nil && resp.Body != nil {
+				_ = resp.Body.Close()
+			}
 			_ = rawConn.Close()
 			return nil, "", err
 		}

@@ -60,7 +60,7 @@ crypt=true
 u=1
 p=2
 `
-	re, err := regexp.Compile(`\[.+?\]`)
+	re, err := regexp.Compile(`\[.+?]`)
 	if err != nil {
 		t.Fatalf("compile regexp failed: %v", err)
 	}

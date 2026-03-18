@@ -22,7 +22,7 @@ func (s *stubDialer) DialVirtual(remote string) (net.Conn, error) {
 	return s.dialFn(remote)
 }
 
-func (s *stubDialer) ServeVirtual(c net.Conn) {}
+func (s *stubDialer) ServeVirtual(_ net.Conn) {}
 
 func setLookupForTest(t *testing.T, fn func(int) (Dialer, bool)) {
 	t.Helper()

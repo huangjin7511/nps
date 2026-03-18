@@ -21,12 +21,12 @@ type LoginController struct {
 	beego.Controller
 }
 
-var BanTime int64 = 5
-var IpBanTime int64 = 180
-var UserBanTime int64 = 3600
-var MaxFailTimes int = 10
-var MaxLoginBody int64 = 1024
-var MaxSkew int64 = 5 * 60 * 1000
+var BanTime = int64(5)
+var IpBanTime = int64(180)
+var UserBanTime = int64(3600)
+var MaxFailTimes = 10
+var MaxLoginBody = int64(1024)
+var MaxSkew = int64(5 * 60 * 1000)
 
 var loginRecord sync.Map
 var loginRecordCleanerOnce sync.Once
@@ -145,7 +145,7 @@ func (s *LoginController) Verify() {
 			cptCode = cptCode[:codeLen-crypt.TotpLen]
 		}
 		cptVerify = cpt.Verify(cptId, cptCode)
-		if isIpBan || (!cptVerify && totpCode == "") || (!cptVerify && totpCode != "" && isUserBan) {
+		if isIpBan || (!cptVerify && totpCode == "") || (!cptVerify && isUserBan) {
 			logs.Warn("Captcha failed for user %s from %s", username, ip)
 			IfLoginFail(ip, true)
 			s.Data["json"] = map[string]interface{}{"status": 0, "msg": "the verification code is wrong, please get it again and try again", "nonce": nonce}
@@ -156,7 +156,7 @@ func (s *LoginController) Verify() {
 	}
 
 	plRaw := s.GetString("password")
-	if ((isUserBan && secureMode) || forcePow || (totpCode != "" && !cptVerify) || isIpBan) && powBits > 0 {
+	if ((isUserBan && secureMode) || forcePow || !cptVerify || isIpBan) && powBits > 0 {
 		powX := s.GetString("powx")
 		bits, _ := s.GetInt("bits", 0)
 		if bits != powBits || !common.ValidatePoW(powBits, plRaw, powX) {
@@ -259,9 +259,8 @@ func (s *LoginController) doLogin(username, password, totp string, explicit bool
 			if v.WebUserName == "" && v.WebPassword == "" {
 				if v.Id <= 0 || username != "user" || !allowVkey || v.VerifyKey != password {
 					return true
-				} else {
-					auth = true
 				}
+				auth = true
 			}
 			if !auth && v.WebUserName == username {
 				pwdInput := password
@@ -360,65 +359,64 @@ func (s *LoginController) Register() {
 		s.Data["year"] = server.GetCurrentYear()
 		s.Data["captcha_open"], _ = beego.AppConfig.Bool("open_captcha")
 		s.TplName = "login/register.html"
-	} else {
-		if b, err := beego.AppConfig.Bool("allow_user_register"); err != nil || !b {
-			s.Data["json"] = map[string]interface{}{"status": 0, "msg": "register is not allow"}
-			s.ServeJSON()
-			return
-		}
-		nonce := crypt.GetRandomString(16)
-		stored := s.GetSession("login_nonce")
-		s.SetSession("login_nonce", nonce)
-		if s.GetString("username") == "" || s.GetString("password") == "" || s.GetString("username") == beego.AppConfig.String("web_username") {
-			s.Data["json"] = map[string]interface{}{"status": 0, "msg": "please check your input", "nonce": nonce}
-			s.ServeJSON()
-			return
-		}
-		captchaOpen, _ := beego.AppConfig.Bool("open_captcha")
-		if captchaOpen {
-			if !cpt.VerifyReq(s.Ctx.Request) {
-				s.Data["json"] = map[string]interface{}{"status": 0, "msg": "the verification code is wrong, please get it again and try again", "nonce": nonce}
-				s.SetSession("login_nonce", nonce)
-				s.ServeJSON()
-				return
-			}
-		}
-		pl, err := crypt.ParseLoginPayload(s.GetString("password"))
-		if err != nil {
-			cert, _ := crypt.GetRSAPublicKeyPEM()
-			s.Data["json"] = map[string]interface{}{"status": 0, "msg": "decrypt error", "nonce": nonce, "cert": cert}
-			s.ServeJSON()
-			return
-		}
-		if stored == nil || stored.(string) != pl.Nonce {
-			s.Data["json"] = map[string]interface{}{"status": 0, "msg": "invalid nonce", "nonce": nonce}
-			s.ServeJSON()
-			return
-		}
-		if secureMode {
-			now := common.TimeNow().UnixMilli()
-			if pl.Timestamp < now-MaxSkew || pl.Timestamp > now+MaxSkew {
-				s.Data["json"] = map[string]interface{}{"status": 0, "msg": "timestamp expired", "nonce": nonce, "timestamp": now}
-				s.ServeJSON()
-				return
-			}
-		}
-		t := &file.Client{
-			Id:          int(file.GetDb().JsonDb.GetClientId()),
-			Status:      true,
-			Cnf:         &file.Config{},
-			WebUserName: s.GetString("username"),
-			WebPassword: pl.Password,
-			Flow:        &file.Flow{},
-		}
-		if err := file.GetDb().NewClient(t); err != nil {
-			s.Data["json"] = map[string]interface{}{"status": 0, "msg": err.Error(), "nonce": nonce}
-		} else {
-			s.DelSession("login_nonce")
-			s.Data["json"] = map[string]interface{}{"status": 1, "msg": "register success"}
-		}
-		s.ServeJSON()
+		return
 	}
+
+	if b, err := beego.AppConfig.Bool("allow_user_register"); err != nil || !b {
+		s.Data["json"] = map[string]interface{}{"status": 0, "msg": "register is not allow"}
+		s.ServeJSON()
+		return
+	}
+	nonce := crypt.GetRandomString(16)
+	stored := s.GetSession("login_nonce")
+	s.SetSession("login_nonce", nonce)
+	if s.GetString("username") == "" || s.GetString("password") == "" || s.GetString("username") == beego.AppConfig.String("web_username") {
+		s.Data["json"] = map[string]interface{}{"status": 0, "msg": "please check your input", "nonce": nonce}
+		s.ServeJSON()
+		return
+	}
+	captchaOpen, _ := beego.AppConfig.Bool("open_captcha")
+	if captchaOpen && !cpt.VerifyReq(s.Ctx.Request) {
+		s.Data["json"] = map[string]interface{}{"status": 0, "msg": "the verification code is wrong, please get it again and try again", "nonce": nonce}
+		s.SetSession("login_nonce", nonce)
+		s.ServeJSON()
+		return
+	}
+	pl, err := crypt.ParseLoginPayload(s.GetString("password"))
+	if err != nil {
+		cert, _ := crypt.GetRSAPublicKeyPEM()
+		s.Data["json"] = map[string]interface{}{"status": 0, "msg": "decrypt error", "nonce": nonce, "cert": cert}
+		s.ServeJSON()
+		return
+	}
+	if stored == nil || stored.(string) != pl.Nonce {
+		s.Data["json"] = map[string]interface{}{"status": 0, "msg": "invalid nonce", "nonce": nonce}
+		s.ServeJSON()
+		return
+	}
+	if secureMode {
+		now := common.TimeNow().UnixMilli()
+		if pl.Timestamp < now-MaxSkew || pl.Timestamp > now+MaxSkew {
+			s.Data["json"] = map[string]interface{}{"status": 0, "msg": "timestamp expired", "nonce": nonce, "timestamp": now}
+			s.ServeJSON()
+			return
+		}
+	}
+	t := &file.Client{
+		Id:          int(file.GetDb().JsonDb.GetClientId()),
+		Status:      true,
+		Cnf:         &file.Config{},
+		WebUserName: s.GetString("username"),
+		WebPassword: pl.Password,
+		Flow:        &file.Flow{},
+	}
+	if err := file.GetDb().NewClient(t); err != nil {
+		s.Data["json"] = map[string]interface{}{"status": 0, "msg": err.Error(), "nonce": nonce}
+	} else {
+		s.DelSession("login_nonce")
+		s.Data["json"] = map[string]interface{}{"status": 1, "msg": "register success"}
+	}
+	s.ServeJSON()
 }
 
 func (s *LoginController) Out() {

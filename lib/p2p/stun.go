@@ -2,6 +2,7 @@ package p2p
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -141,7 +142,8 @@ func runSTUNProbeEndpointDetailed(ctx context.Context, localConn net.PacketConn,
 	for time.Now().Before(deadline) {
 		n, replyAddr, err := localConn.ReadFrom(buf)
 		if err != nil {
-			if ne, ok := err.(net.Error); ok && ne.Timeout() {
+			var ne net.Error
+			if errors.As(err, &ne) && ne.Timeout() {
 				break
 			}
 			if isIgnorableUDPIcmpError(err) {

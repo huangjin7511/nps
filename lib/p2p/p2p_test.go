@@ -1654,7 +1654,7 @@ func TestParsePCPMapResponse(t *testing.T) {
 	binary.BigEndian.PutUint32(response[4:8], 3600)
 	binary.BigEndian.PutUint32(response[8:12], 42)
 	var nonce [12]byte
-	copy(nonce[:], []byte("pcpnonce1234"))
+	copy(nonce[:], "pcpnonce1234")
 	copy(response[24:36], nonce[:])
 	binary.BigEndian.PutUint16(response[42:44], 54321)
 	externalIP := netip.MustParseAddr("198.51.100.25").As16()
@@ -1693,7 +1693,7 @@ func TestParsePCPMapResponseRejectsNonceMismatch(t *testing.T) {
 	response[0] = pcpVersion
 	response[1] = pcpOpMap | pcpOpReply
 	response[3] = byte(pcpCodeOK)
-	copy(response[24:36], []byte("pcpnonce1234"))
+	copy(response[24:36], "pcpnonce1234")
 	binary.BigEndian.PutUint16(response[42:44], 54321)
 	externalIP := netip.MustParseAddr("198.51.100.25").As16()
 	copy(response[44:60], externalIP[:])

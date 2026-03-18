@@ -21,13 +21,11 @@ func GetRunPath() string {
 		if !IsWindows() {
 			dir, _ := filepath.Abs(filepath.Dir(os.Args[0])) //返回
 			return dir + "/"
-		} else {
-			return "./"
 		}
-	} else {
-		if path = GetInstallPath(); !FileExists(path) {
-			return GetAppPath()
-		}
+		return "./"
+	}
+	if path = GetInstallPath(); !FileExists(path) {
+		return GetAppPath()
 	}
 	return path
 }

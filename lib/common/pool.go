@@ -5,10 +5,9 @@ import (
 )
 
 const (
-	PoolSize      = 64 << 10
-	PoolSizeSmall = 255
-	PoolSizeUdp   = 1472 + 200
-	PoolSizeCopy  = 32 << 10
+	PoolSize     = 64 << 10
+	PoolSizeUdp  = 1472 + 200
+	PoolSizeCopy = 32 << 10
 )
 
 func normalizeForPut(buf []byte, size int) ([]byte, bool) {
@@ -88,41 +87,6 @@ func (p *bytePoolUDP) PutZero(buf []byte) {
 	p.pool.Put((*[PoolSizeUdp]byte)(b))
 }
 
-type bytePoolSmall struct {
-	pool sync.Pool
-}
-
-func newBytePoolSmall() *bytePoolSmall {
-	return &bytePoolSmall{
-		pool: sync.Pool{
-			New: func() any {
-				return new([PoolSizeSmall]byte)
-			},
-		},
-	}
-}
-
-func (p *bytePoolSmall) Get() []byte {
-	return p.pool.Get().(*[PoolSizeSmall]byte)[:]
-}
-
-func (p *bytePoolSmall) Put(buf []byte) {
-	b, ok := normalizeForPut(buf, PoolSizeSmall)
-	if !ok {
-		return
-	}
-	p.pool.Put((*[PoolSizeSmall]byte)(b))
-}
-
-func (p *bytePoolSmall) PutZero(buf []byte) {
-	b, ok := normalizeForPut(buf, PoolSizeSmall)
-	if !ok {
-		return
-	}
-	clear(b)
-	p.pool.Put((*[PoolSizeSmall]byte)(b))
-}
-
 type bytePoolCopy struct {
 	pool sync.Pool
 }
@@ -159,8 +123,7 @@ func (p *bytePoolCopy) PutZero(buf []byte) {
 }
 
 var (
-	BufPool      = newBytePool64K()
-	BufPoolUdp   = newBytePoolUDP()
-	BufPoolSmall = newBytePoolSmall()
-	BufPoolCopy  = newBytePoolCopy()
+	BufPool     = newBytePool64K()
+	BufPoolUdp  = newBytePoolUDP()
+	BufPoolCopy = newBytePoolCopy()
 )

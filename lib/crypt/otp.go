@@ -19,6 +19,20 @@ const TotpLen = 6
 
 var b32 = base32.StdEncoding.WithPadding(base32.NoPadding)
 
+func totpValue(key []byte, counter int64) int {
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, uint64(counter))
+	mac := hmac.New(sha1.New, key)
+	mac.Write(buf)
+	hash := mac.Sum(nil)
+	offset := hash[len(hash)-1] & 0x0F
+	val := (int(hash[offset])&0x7F)<<24 |
+		(int(hash[offset+1])&0xFF)<<16 |
+		(int(hash[offset+2])&0xFF)<<8 |
+		(int(hash[offset+3]) & 0xFF)
+	return val % 1000000
+}
+
 func GenerateTOTPSecret() (string, error) {
 	buf := make([]byte, 10)
 	if _, err := rand.Read(buf); err != nil {
@@ -38,19 +52,7 @@ func ValidateTOTPCode(secret, code string) (bool, error) {
 	}
 	now := time.Now().UTC().Unix() / 30
 	for i := -1; i <= 1; i++ {
-		counter := now + int64(i)
-		buf := make([]byte, 8)
-		binary.BigEndian.PutUint64(buf, uint64(counter))
-		mac := hmac.New(sha1.New, key)
-		mac.Write(buf)
-		hash := mac.Sum(nil)
-		offset := hash[len(hash)-1] & 0x0F
-		val := (int(hash[offset])&0x7F)<<24 |
-			(int(hash[offset+1])&0xFF)<<16 |
-			(int(hash[offset+2])&0xFF)<<8 |
-			(int(hash[offset+3]) & 0xFF)
-		val %= 1000000
-		if val == pass {
+		if totpValue(key, now+int64(i)) == pass {
 			return true, nil
 		}
 	}
@@ -64,17 +66,7 @@ func GetTOTPCode(secret string) (string, int64, error) {
 	}
 	now := time.Now().UTC().Unix()
 	counter := now / 30
-	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf, uint64(counter))
-	mac := hmac.New(sha1.New, key)
-	mac.Write(buf)
-	hash := mac.Sum(nil)
-	offset := hash[len(hash)-1] & 0x0F
-	val := (int(hash[offset])&0x7F)<<24 |
-		(int(hash[offset+1])&0xFF)<<16 |
-		(int(hash[offset+2])&0xFF)<<8 |
-		(int(hash[offset+3]) & 0xFF)
-	val %= 1000000
+	val := totpValue(key, counter)
 	code := fmt.Sprintf("%06d", val)
 	remaining := 30 - (now % 30)
 	return code, remaining, nil
