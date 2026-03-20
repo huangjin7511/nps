@@ -6,9 +6,8 @@ import (
 )
 
 func TestPeerTransportDataRoundTrip(t *testing.T) {
-	vkey := "test-vkey"
 	certDER := []byte("test-cert-der")
-	encoded := EncodePeerTransportData(vkey, certDER)
+	encoded := EncodePeerTransportData(certDER)
 	if encoded == "" {
 		t.Fatal("expected encoded transport data")
 	}
@@ -32,8 +31,11 @@ func TestPeerTransportDataRoundTrip(t *testing.T) {
 	if decoded.TransportData != encoded {
 		t.Fatalf("transport data changed after json round trip: got %q want %q", decoded.TransportData, encoded)
 	}
-	if !VerifyPeerTransportData(vkey, decoded.TransportData, certDER) {
+	if !VerifyPeerTransportData("test-vkey", decoded.TransportData, certDER) {
 		t.Fatal("expected encoded transport data to verify")
+	}
+	if !VerifyPeerTransportData("another-vkey", decoded.TransportData, certDER) {
+		t.Fatal("expected fingerprint transport data to verify across different vkeys")
 	}
 }
 

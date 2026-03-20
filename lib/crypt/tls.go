@@ -162,17 +162,35 @@ func GetCertFingerprint(certificate tls.Certificate) []byte {
 	return sum[:]
 }
 
-func EncodePeerTransportData(vkey string, certificateDER []byte) string {
+func EncodePeerTransportData(certificateDER []byte) string {
 	if len(certificateDER) == 0 {
 		return ""
 	}
-	return hex.EncodeToString(GetHMAC(vkey, certificateDER))
+	sum := sha256.Sum256(certificateDER)
+	return hex.EncodeToString(sum[:])
 }
 
 func VerifyPeerTransportData(vkey, transportData string, certificateDER []byte) bool {
 	if transportData == "" || len(certificateDER) == 0 {
 		return false
 	}
+	sum := sha256.Sum256(certificateDER)
+	if decoded, err := hex.DecodeString(transportData); err == nil {
+		if subtle.ConstantTimeCompare(decoded, sum[:]) == 1 {
+			return true
+		}
+	}
+	if decoded, err := base64.StdEncoding.DecodeString(transportData); err == nil {
+		if subtle.ConstantTimeCompare(decoded, sum[:]) == 1 {
+			return true
+		}
+	}
+	if decoded, err := base64.RawStdEncoding.DecodeString(transportData); err == nil {
+		if subtle.ConstantTimeCompare(decoded, sum[:]) == 1 {
+			return true
+		}
+	}
+
 	expected := GetHMAC(vkey, certificateDER)
 	if decoded, err := hex.DecodeString(transportData); err == nil {
 		return subtle.ConstantTimeCompare(decoded, expected) == 1
