@@ -228,7 +228,7 @@ func (s *TRPClient) joinP2PSession(start p2p.P2PPunchStart) {
 	var transportTimeout time.Duration
 	sendData := ""
 	if P2PMode == common.CONN_QUIC {
-		sendData = string(crypt.GetHMAC(s.vKey, crypt.GetCert().Certificate[0]))
+		sendData = crypt.EncodePeerTransportData(s.vKey, crypt.GetCert().Certificate[0])
 	}
 	if localConn, remoteAddress, preferredLocalAddr, sessionID, role, mode, data, transportTimeout, err = p2p.RunProviderSession(p2pCtx, controlConn, start, preferredLocalAddr, P2PMode, sendData, s.p2pSTUNServers); err != nil {
 		logs.Error("run provider P2P session error: %v", err)

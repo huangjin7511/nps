@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/subtle"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -159,6 +160,30 @@ func GetCertFingerprint(certificate tls.Certificate) []byte {
 	}
 	sum := sha256.Sum256(certificate.Certificate[0])
 	return sum[:]
+}
+
+func EncodePeerTransportData(vkey string, certificateDER []byte) string {
+	if len(certificateDER) == 0 {
+		return ""
+	}
+	return hex.EncodeToString(GetHMAC(vkey, certificateDER))
+}
+
+func VerifyPeerTransportData(vkey, transportData string, certificateDER []byte) bool {
+	if transportData == "" || len(certificateDER) == 0 {
+		return false
+	}
+	expected := GetHMAC(vkey, certificateDER)
+	if decoded, err := hex.DecodeString(transportData); err == nil {
+		return subtle.ConstantTimeCompare(decoded, expected) == 1
+	}
+	if decoded, err := base64.StdEncoding.DecodeString(transportData); err == nil {
+		return subtle.ConstantTimeCompare(decoded, expected) == 1
+	}
+	if decoded, err := base64.RawStdEncoding.DecodeString(transportData); err == nil {
+		return subtle.ConstantTimeCompare(decoded, expected) == 1
+	}
+	return subtle.ConstantTimeCompare([]byte(transportData), expected) == 1
 }
 
 func AddTrustedCert(vkey string, fp []byte) {

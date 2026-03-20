@@ -696,7 +696,7 @@ func (mgr *P2PManager) newUdpConn(preferredLocalAddr string, cfg *config.CommonC
 			"transport_mode": mode,
 		},
 	})
-	logs.Debug("visitor p2p result local=%s remote=%s role=%s mode=%s data=%s", preferredLocalAddr, remoteAddr, role, mode, data)
+	logs.Debug("visitor p2p result local=%s remote=%s role=%s mode=%s transport_data_len=%d", preferredLocalAddr, remoteAddr, role, mode, len(data))
 
 	var udpTunnel net.Conn
 	var sess *quic.Conn
@@ -751,7 +751,7 @@ func (mgr *P2PManager) newUdpConn(preferredLocalAddr string, cfg *config.CommonC
 			return errors.New("quic certificate missing")
 		}
 		leaf := state.PeerCertificates[0]
-		if data != string(crypt.GetHMAC(cfg.VKey, leaf.Raw)) {
+		if !crypt.VerifyPeerTransportData(cfg.VKey, data, leaf.Raw) {
 			logs.Error("Failed to verify QUIC certificate")
 			_ = p2p.WritePunchProgress(remoteConn, p2p.P2PPunchProgress{
 				SessionID:  sessionID,
