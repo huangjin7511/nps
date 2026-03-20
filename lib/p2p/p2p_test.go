@@ -1281,6 +1281,24 @@ func TestSessionPacerDeterministicAndBounded(t *testing.T) {
 	}
 }
 
+func TestSessionPacerSeparatesRoles(t *testing.T) {
+	visitor := newSessionPacer(NormalizeP2PPunchStart(P2PPunchStart{
+		SessionID: "session-1",
+		Token:     "token-1",
+		Wire:      P2PWireSpec{RouteID: "route-1"},
+		Role:      common.WORK_P2P_VISITOR,
+	}))
+	provider := newSessionPacer(NormalizeP2PPunchStart(P2PPunchStart{
+		SessionID: "session-1",
+		Token:     "token-1",
+		Wire:      P2PWireSpec{RouteID: "route-1"},
+		Role:      common.WORK_P2P_PROVIDER,
+	}))
+	if visitor.seed == provider.seed {
+		t.Fatal("pacer seed should differ across roles")
+	}
+}
+
 func TestBuildBirthdayPunchTargets(t *testing.T) {
 	peer := P2PPeerInfo{
 		Nat: NatObservation{
@@ -1924,6 +1942,31 @@ func TestRunPeriodicSprayReturnsImmediatelyWhenNominated(t *testing.T) {
 	session.runPeriodicSpray(ctx, nil, nil)
 	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
 		t.Fatalf("runPeriodicSpray() returned too slowly after nomination: %s", elapsed)
+	}
+}
+
+func TestResolvePunchTargetsCachesResolvedAddrsAndPreservesIndices(t *testing.T) {
+	session := &runtimeSession{}
+	localAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 4000}
+	targets := []string{"127.0.0.1:5000", "bad target", "127.0.0.1:5001"}
+
+	first := session.resolvePunchTargets(localAddr, targets)
+	if len(first) != 2 {
+		t.Fatalf("len(first) = %d, want 2", len(first))
+	}
+	if first[0].index != 0 || first[1].index != 2 {
+		t.Fatalf("resolved indices = %#v, want [0 2]", []int{first[0].index, first[1].index})
+	}
+	if len(session.resolvedTargetAddrs) != 2 {
+		t.Fatalf("cache size = %d, want 2", len(session.resolvedTargetAddrs))
+	}
+
+	second := session.resolvePunchTargets(localAddr, targets)
+	if len(second) != len(first) {
+		t.Fatalf("len(second) = %d, want %d", len(second), len(first))
+	}
+	if second[0].addr != first[0].addr || second[1].addr != first[1].addr {
+		t.Fatal("resolved target cache should reuse parsed UDP addresses within the session")
 	}
 }
 

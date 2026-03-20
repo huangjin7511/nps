@@ -22,7 +22,7 @@ type sessionPacer struct {
 
 func newSessionPacer(start P2PPunchStart) *sessionPacer {
 	wire := p2pStartWireSpec(start)
-	sum := sha256.Sum256([]byte("nps-p2p-pacer|" + start.SessionID + "|" + start.Token + "|" + wire.RouteID))
+	sum := sha256.Sum256([]byte("nps-p2p-pacer|" + start.SessionID + "|" + start.Token + "|" + wire.RouteID + "|" + start.Role))
 	return &sessionPacer{seed: sum}
 }
 

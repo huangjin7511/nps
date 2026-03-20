@@ -54,6 +54,7 @@ type runtimeSession struct {
 
 	mu                  sync.Mutex
 	readLoopDone        map[net.PacketConn]chan struct{}
+	resolvedTargetAddrs map[string]*net.UDPAddr
 	endpoints           SessionEndpoints
 	confirmed           chan confirmedPair
 	nominate            map[string]struct{}
@@ -1077,6 +1078,67 @@ func (s *runtimeSession) snapshotSockets() []net.PacketConn {
 	out := make([]net.PacketConn, 0, len(s.sockets))
 	out = append(out, s.sockets...)
 	return out
+}
+
+type resolvedPunchTarget struct {
+	index int
+	addr  *net.UDPAddr
+}
+
+func (s *runtimeSession) resolvePunchTargets(localAddr net.Addr, targets []string) []resolvedPunchTarget {
+	if len(targets) == 0 || localAddr == nil {
+		return nil
+	}
+	network := detectAddrFamily(localAddr).network()
+	if network == "" {
+		return nil
+	}
+	resolved := make([]resolvedPunchTarget, 0, len(targets))
+	for index, target := range targets {
+		addr := s.resolvePunchTarget(network, target)
+		if addr == nil {
+			continue
+		}
+		resolved = append(resolved, resolvedPunchTarget{
+			index: index,
+			addr:  addr,
+		})
+	}
+	return resolved
+}
+
+func (s *runtimeSession) resolvePunchTarget(network, target string) *net.UDPAddr {
+	if s == nil {
+		return nil
+	}
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return nil
+	}
+	key := network + "|" + target
+
+	s.mu.Lock()
+	if cached := s.resolvedTargetAddrs[key]; cached != nil {
+		s.mu.Unlock()
+		return cached
+	}
+	s.mu.Unlock()
+
+	addr, err := net.ResolveUDPAddr(network, target)
+	if err != nil {
+		return nil
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.resolvedTargetAddrs == nil {
+		s.resolvedTargetAddrs = make(map[string]*net.UDPAddr)
+	}
+	if cached := s.resolvedTargetAddrs[key]; cached != nil {
+		return cached
+	}
+	s.resolvedTargetAddrs[key] = addr
+	return addr
 }
 
 func (s *runtimeSession) ownsSocket(socket net.PacketConn) bool {

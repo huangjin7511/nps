@@ -161,9 +161,9 @@ func (s *runtimeSession) runSprayPass(ctx context.Context, sendConn net.PacketCo
 }
 
 func (s *runtimeSession) runSprayPassWithBurst(ctx context.Context, sendConn net.PacketConn, targets []string, burstCount int) {
-	resolveNetwork := detectAddrFamily(sendConn.LocalAddr()).network()
 	pacer := s.ensurePacer()
-	for i, target := range targets {
+	resolvedTargets := s.resolvePunchTargets(sendConn.LocalAddr(), targets)
+	for _, target := range resolvedTargets {
 		select {
 		case <-ctx.Done():
 			return
@@ -172,20 +172,16 @@ func (s *runtimeSession) runSprayPassWithBurst(ctx context.Context, sendConn net
 		if s.cm.ConfirmedPair() != nil || s.cm.NominatedPair() != nil {
 			return
 		}
-		udpAddr, err := net.ResolveUDPAddr(resolveNetwork, target)
-		if err != nil {
-			continue
-		}
 		for burst := 0; burst < burstCount; burst++ {
 			if s.cm.ConfirmedPair() != nil || s.cm.NominatedPair() != nil {
 				return
 			}
-			_ = s.writeUDPToConn(sendConn, packetTypePunch, udpAddr)
-			if !sleepContext(ctx, pacer.sprayPacketGap(i, burst, s.plan.SprayPerPacketSleep)) {
+			_ = s.writeUDPToConn(sendConn, packetTypePunch, target.addr)
+			if !sleepContext(ctx, pacer.sprayPacketGap(target.index, burst, s.plan.SprayPerPacketSleep)) {
 				return
 			}
 		}
-		if i < len(targets)-1 && !sleepContext(ctx, pacer.sprayBurstGap(i, s.plan.SprayBurstGap)) {
+		if target.index < len(targets)-1 && !sleepContext(ctx, pacer.sprayBurstGap(target.index, s.plan.SprayBurstGap)) {
 			return
 		}
 	}
