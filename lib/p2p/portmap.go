@@ -142,10 +142,7 @@ func runPortMappingRenewal(ctx context.Context, renew func() error, leaseSeconds
 	if renew == nil || leaseSeconds <= 0 {
 		return
 	}
-	interval := time.Duration(leaseSeconds/2) * time.Second
-	if interval < 30*time.Second {
-		interval = 30 * time.Second
-	}
+	interval := portMappingRenewInterval(leaseSeconds)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -158,6 +155,24 @@ func runPortMappingRenewal(ctx context.Context, renew func() error, leaseSeconds
 			}
 		}
 	}
+}
+
+func portMappingRenewInterval(leaseSeconds int) time.Duration {
+	if leaseSeconds <= 0 {
+		return time.Second
+	}
+	lease := time.Duration(leaseSeconds) * time.Second
+	interval := lease / 2
+	if interval < time.Second {
+		interval = time.Second
+	}
+	if interval >= lease {
+		interval = lease * 3 / 4
+	}
+	if interval <= 0 {
+		return 500 * time.Millisecond
+	}
+	return interval
 }
 
 func portMappingInternalIP(localAddr net.Addr) string {

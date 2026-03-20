@@ -13,27 +13,43 @@ import (
 )
 
 func (s *runtimeSession) startSpray(ctx context.Context) {
-	targets := BuildPreferredDirectPunchTargets(s.summary.Self, s.summary.Peer)
-	mode := "direct"
+	directTargets := filterPunchTargetsForLocalAddr(s.localConn.LocalAddr(), s.directSprayTargets())
+	targetPhases := filterTargetStagesForLocalAddr(s.localConn.LocalAddr(), s.targetSprayStages())
+	targetTargets := flattenTargetStages(targetPhases)
+	primaryTargets := directTargets
 	if s.plan.UseTargetSpray {
-		targets = BuildPreferredPunchTargets(s.summary.Self, s.summary.Peer, s.plan)
-		mode = "target"
+		primaryTargets = append(append([]string(nil), directTargets...), targetTargets...)
 	}
-	if len(targets) == 0 {
+	if len(primaryTargets) == 0 {
 		return
+	}
+	mode := "direct"
+	if s.plan.UseTargetSpray && len(targetTargets) > 0 {
+		mode = "staged"
 	}
 	_ = s.sendProgress("spray_started", "ok", mode, addrString(s.localConn.LocalAddr()), "", map[string]string{
-		"target_count": strconv.Itoa(len(targets)),
-		"base_port":    strconv.Itoa(s.summary.Peer.Nat.ObservedBasePort),
-		"rounds":       strconv.Itoa(s.plan.SprayRounds),
-		"burst":        strconv.Itoa(s.plan.SprayBurst),
-		"intervals":    fmt.Sprint(s.plan.predictionIntervals()),
+		"target_count":        strconv.Itoa(len(primaryTargets)),
+		"direct_target_count": strconv.Itoa(len(directTargets)),
+		"target_only_count":   strconv.Itoa(len(targetTargets)),
+		"base_port":           strconv.Itoa(s.summary.Peer.Nat.ObservedBasePort),
+		"rounds":              strconv.Itoa(s.plan.SprayRounds),
+		"burst":               strconv.Itoa(s.plan.SprayBurst),
+		"intervals":           fmt.Sprint(s.plan.predictionIntervals()),
 	})
-	logs.Info("[P2P] spray mode=%s basePort=%d intervals=%v rounds=%d burst=%d",
-		mode, s.summary.Peer.Nat.ObservedBasePort, s.plan.predictionIntervals(), s.plan.SprayRounds, s.plan.SprayBurst)
-	s.runSprayRounds(ctx, s.localConn, targets)
+	if len(directTargets) > 0 {
+		s.startSprayPhase(ctx, "direct", directTargets, directPhaseRounds(s.plan), directPhaseBurst(s.plan))
+	}
 	if s.cm.ConfirmedPair() != nil || s.cm.NominatedPair() != nil {
 		return
+	}
+	if s.plan.UseTargetSpray {
+		for _, phase := range targetPhases {
+			rounds, burst := targetPhaseBudget(s.plan, phase.Name)
+			s.startSprayPhase(ctx, phase.Name, phase.Targets, rounds, burst)
+			if s.cm.ConfirmedPair() != nil || s.cm.NominatedPair() != nil {
+				return
+			}
+		}
 	}
 	if s.plan.UseBirthdayAttack || s.plan.AllowBirthdayFallback {
 		if !s.plan.UseBirthdayAttack {
@@ -44,11 +60,12 @@ func (s *runtimeSession) startSpray(ctx context.Context) {
 		s.runBirthdaySpray(ctx)
 		return
 	}
-	s.runPeriodicSpray(ctx, s.snapshotSockets(), targets)
+	s.runPeriodicSpray(ctx, s.snapshotSockets(), primaryTargets)
 }
 
 func (s *runtimeSession) runBirthdaySpray(ctx context.Context) {
-	targets := BuildBirthdayPunchTargets(s.summary.Peer, s.plan)
+	targets := s.birthdaySprayTargets()
+	targets = filterPunchTargetsForLocalAddr(s.localConn.LocalAddr(), targets)
 	if len(targets) == 0 {
 		return
 	}
@@ -76,21 +93,28 @@ func (s *runtimeSession) runBirthdaySpray(ctx context.Context) {
 		if s.cm.ConfirmedPair() != nil || s.cm.NominatedPair() != nil {
 			return
 		}
-		if round < s.plan.SprayRounds-1 {
-			time.Sleep(s.plan.SprayPhaseGap)
+		if round < s.plan.SprayRounds-1 && !sleepContext(ctx, s.ensurePacer().sprayPhaseGap(round, s.plan.SprayPhaseGap)) {
+			return
 		}
 	}
 	s.runPeriodicSpray(ctx, s.ensureBirthdaySockets(ctx, baseBind, s.plan.BirthdayListenPorts), targets)
 }
 
 func (s *runtimeSession) runSprayRounds(ctx context.Context, sendConn net.PacketConn, targets []string) {
-	for round := 0; round < s.plan.SprayRounds; round++ {
-		s.runSprayPass(ctx, sendConn, targets)
+	s.runSprayRoundsWithBudget(ctx, sendConn, targets, s.plan.SprayRounds, s.plan.SprayBurst)
+}
+
+func (s *runtimeSession) runSprayRoundsWithBudget(ctx context.Context, sendConn net.PacketConn, targets []string, rounds, burst int) {
+	if rounds <= 0 || burst <= 0 {
+		return
+	}
+	for round := 0; round < rounds; round++ {
+		s.runSprayPassWithBurst(ctx, sendConn, targets, burst)
 		if s.cm.ConfirmedPair() != nil || s.cm.NominatedPair() != nil {
 			return
 		}
-		if round < s.plan.SprayRounds-1 {
-			time.Sleep(s.plan.SprayPhaseGap)
+		if round < rounds-1 && !sleepContext(ctx, s.ensurePacer().sprayPhaseGap(round, s.plan.SprayPhaseGap)) {
+			return
 		}
 	}
 }
@@ -109,14 +133,17 @@ func (s *runtimeSession) runSprayMatrixOnce(ctx context.Context, sockets []net.P
 
 func (s *runtimeSession) runPeriodicSpray(ctx context.Context, sockets []net.PacketConn, targets []string) {
 	for attempt := 0; ; attempt++ {
-		delay := periodicSprayDelay(attempt)
+		if s.cm.ConfirmedPair() != nil || s.cm.NominatedPair() != nil {
+			return
+		}
+		delay := s.ensurePacer().periodicRetryDelay(attempt)
 		timer := time.NewTimer(delay)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
 			return
 		case <-timer.C:
-			if s.cm.ConfirmedPair() != nil {
+			if s.cm.ConfirmedPair() != nil || s.cm.NominatedPair() != nil {
 				return
 			}
 			_ = s.sendProgress("spray_retry", "ok", fmt.Sprintf("attempt=%d", attempt+1), addrString(s.localConn.LocalAddr()), s.cm.CandidateRemote(), map[string]string{
@@ -130,6 +157,12 @@ func (s *runtimeSession) runPeriodicSpray(ctx context.Context, sockets []net.Pac
 }
 
 func (s *runtimeSession) runSprayPass(ctx context.Context, sendConn net.PacketConn, targets []string) {
+	s.runSprayPassWithBurst(ctx, sendConn, targets, s.plan.SprayBurst)
+}
+
+func (s *runtimeSession) runSprayPassWithBurst(ctx context.Context, sendConn net.PacketConn, targets []string, burstCount int) {
+	resolveNetwork := detectAddrFamily(sendConn.LocalAddr()).network()
+	pacer := s.ensurePacer()
 	for i, target := range targets {
 		select {
 		case <-ctx.Done():
@@ -139,21 +172,54 @@ func (s *runtimeSession) runSprayPass(ctx context.Context, sendConn net.PacketCo
 		if s.cm.ConfirmedPair() != nil || s.cm.NominatedPair() != nil {
 			return
 		}
-		udpAddr, err := net.ResolveUDPAddr("udp", target)
+		udpAddr, err := net.ResolveUDPAddr(resolveNetwork, target)
 		if err != nil {
 			continue
 		}
-		for burst := 0; burst < s.plan.SprayBurst; burst++ {
+		for burst := 0; burst < burstCount; burst++ {
 			if s.cm.ConfirmedPair() != nil || s.cm.NominatedPair() != nil {
 				return
 			}
 			_ = s.writeUDPToConn(sendConn, packetTypePunch, udpAddr)
-			time.Sleep(s.plan.SprayPerPacketSleep)
+			if !sleepContext(ctx, pacer.sprayPacketGap(i, burst, s.plan.SprayPerPacketSleep)) {
+				return
+			}
 		}
-		if i < len(targets)-1 {
-			time.Sleep(s.plan.SprayBurstGap)
+		if i < len(targets)-1 && !sleepContext(ctx, pacer.sprayBurstGap(i, s.plan.SprayBurstGap)) {
+			return
 		}
 	}
+}
+
+func (s *runtimeSession) startSprayPhase(ctx context.Context, phase string, targets []string, rounds, burst int) {
+	if len(targets) == 0 || rounds <= 0 || burst <= 0 {
+		return
+	}
+	_ = s.sendProgress("spray_phase", "ok", phase, addrString(s.localConn.LocalAddr()), "", map[string]string{
+		"target_count": strconv.Itoa(len(targets)),
+		"rounds":       strconv.Itoa(rounds),
+		"burst":        strconv.Itoa(burst),
+	})
+	logs.Info("[P2P] spray phase=%s basePort=%d intervals=%v rounds=%d burst=%d targets=%d",
+		phase, s.summary.Peer.Nat.ObservedBasePort, s.plan.predictionIntervals(), rounds, burst, len(targets))
+	s.runSprayRoundsWithBudget(ctx, s.localConn, targets, rounds, burst)
+}
+
+func directPhaseRounds(plan PunchPlan) int {
+	if plan.SprayRounds <= 1 {
+		return 1
+	}
+	return 1
+}
+
+func directPhaseBurst(plan PunchPlan) int {
+	if plan.SprayBurst <= 0 {
+		return 0
+	}
+	if plan.SprayBurst < 4 {
+		return plan.SprayBurst
+	}
+	return 4
 }
 
 func buildAdditionalBindAddr(localAddr net.Addr) string {
@@ -178,7 +244,7 @@ func (s *runtimeSession) ensureBirthdaySockets(ctx context.Context, bindAddr str
 			break
 		}
 		s.addSocket(birthdayConn)
-		go s.readLoopOnConn(ctx, birthdayConn)
+		s.startReadLoop(ctx, birthdayConn)
 		sockets = append(sockets, birthdayConn)
 	}
 	if len(sockets) > desired {
@@ -187,28 +253,123 @@ func (s *runtimeSession) ensureBirthdaySockets(ctx context.Context, bindAddr str
 	return sockets
 }
 
-func periodicSprayDelay(attempt int) time.Duration {
-	if attempt < 0 {
-		attempt = 0
-	}
-	delay := 1500*time.Millisecond + time.Duration(minInt(attempt, 5))*500*time.Millisecond
-	switch attempt % 3 {
-	case 1:
-		delay += 100 * time.Millisecond
-	case 2:
-		delay -= 100 * time.Millisecond
-	}
-	if delay < 500*time.Millisecond {
-		delay = 500 * time.Millisecond
-	}
-	if delay > 4*time.Second {
-		delay = 4 * time.Second
-	}
-	return delay
-}
-
 func minInt(a, b int) int {
 	if a < b {
+		return a
+	}
+	return b
+}
+
+func sleepContext(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		select {
+		case <-ctx.Done():
+			return false
+		default:
+			return true
+		}
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func filterPunchTargetsForLocalAddr(localAddr net.Addr, targets []string) []string {
+	family := detectAddrFamily(localAddr)
+	if len(targets) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(targets))
+	seen := make(map[string]struct{}, len(targets))
+	for _, target := range targets {
+		target = common.ValidateAddr(target)
+		if target == "" || !family.matchesAddr(target) {
+			continue
+		}
+		if _, ok := seen[target]; ok {
+			continue
+		}
+		seen[target] = struct{}{}
+		out = append(out, target)
+	}
+	return out
+}
+
+func (s *runtimeSession) directSprayTargets() []string {
+	if s == nil {
+		return nil
+	}
+	ranker := s.ensureRanker()
+	return ranker.DirectTargets()
+}
+
+func (s *runtimeSession) targetSprayStages() []PunchTargetStage {
+	if s == nil {
+		return nil
+	}
+	ranker := s.ensureRanker()
+	return ranker.TargetStages()
+}
+
+func (s *runtimeSession) birthdaySprayTargets() []string {
+	if s == nil {
+		return nil
+	}
+	ranker := s.ensureRanker()
+	return ranker.BirthdayTargets()
+}
+
+func filterTargetStagesForLocalAddr(localAddr net.Addr, stages []PunchTargetStage) []PunchTargetStage {
+	if len(stages) == 0 {
+		return nil
+	}
+	filtered := make([]PunchTargetStage, 0, len(stages))
+	for _, stage := range stages {
+		targets := filterPunchTargetsForLocalAddr(localAddr, stage.Targets)
+		if len(targets) == 0 {
+			continue
+		}
+		filtered = append(filtered, PunchTargetStage{
+			Name:    stage.Name,
+			Targets: targets,
+		})
+	}
+	return filtered
+}
+
+func flattenTargetStages(stages []PunchTargetStage) []string {
+	if len(stages) == 0 {
+		return nil
+	}
+	out := make([]string, 0)
+	for _, stage := range stages {
+		out = appendOrderedUnique(out, stage.Targets)
+	}
+	return out
+}
+
+func targetPhaseBudget(plan PunchPlan, phase string) (int, int) {
+	switch phase {
+	case "target_likely_next":
+		return 1, minInt(plan.SprayBurst, 4)
+	case "target_history_exact":
+		return 1, minInt(plan.SprayBurst, 5)
+	case "target_history_neighbor":
+		return maxInt(1, plan.SprayRounds-1), minInt(plan.SprayBurst, 6)
+	case "target_local_fallback":
+		return 1, minInt(plan.SprayBurst, 2)
+	default:
+		return plan.SprayRounds, plan.SprayBurst
+	}
+}
+
+func maxInt(a, b int) int {
+	if a > b {
 		return a
 	}
 	return b

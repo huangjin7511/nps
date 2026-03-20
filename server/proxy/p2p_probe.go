@@ -33,19 +33,19 @@ func (s *P2PServer) serveListener(listener *net.UDPConn, listenPort int, errCh c
 }
 
 func (s *P2PServer) handleProbe(listener *net.UDPConn, listenPort int, addr *net.UDPAddr, data []byte) {
-	packet, err := p2p.DecodeUDPPacketWithLookup(data, p2pstate.LookupToken)
+	packet, err := p2p.DecodeUDPPacketWithLookup(data, p2pstate.LookupSession)
 	if err != nil {
 		return
 	}
 	if packet.Type != "probe" {
 		return
 	}
-	if !p2pstate.AcceptPacket(packet.SessionID, packet.Timestamp, packet.Nonce) {
+	if !p2pstate.AcceptPacket(packet.WireID, packet.Timestamp, packet.Nonce) {
 		return
 	}
 
 	logs.Trace("[P2P] probe from=%s observed public port=%d", addr.String(), addr.Port)
-	p2pstate.RecordObservation(packet.SessionID, packet.Role, p2p.ProbeSample{
+	p2pstate.RecordObservation(packet.WireID, packet.Role, p2p.ProbeSample{
 		Provider:        p2p.ProbeProviderNPS,
 		Mode:            p2p.ProbeModeUDP,
 		ProbePort:       listenPort,
@@ -53,7 +53,7 @@ func (s *P2PServer) handleProbe(listener *net.UDPConn, listenPort int, addr *net
 		ServerReplyAddr: listener.LocalAddr().String(),
 	})
 
-	ack := p2p.NewProbeAckPacket(packet.SessionID, packet.Token, packet.Role, listenPort, addr.String(), false)
+	ack := p2p.NewProbeAckPacketWithWire(packet.SessionID, packet.Token, packet.Role, listenPort, addr.String(), false, p2p.P2PWireSpec{RouteID: packet.WireID})
 	raw, err := p2p.EncodeUDPPacket(ack)
 	if err == nil {
 		_, _ = listener.WriteToUDP(raw, addr)
@@ -80,7 +80,7 @@ func (s *P2PServer) sendExtraReply(listenPort int, target *net.UDPAddr, packet *
 	}
 	defer func() { _ = extraConn.Close() }()
 	_ = extraConn.SetWriteDeadline(time.Now().Add(1 * time.Second))
-	extraAck := p2p.NewProbeAckPacket(packet.SessionID, packet.Token, packet.Role, listenPort, target.String(), true)
+	extraAck := p2p.NewProbeAckPacketWithWire(packet.SessionID, packet.Token, packet.Role, listenPort, target.String(), true, p2p.P2PWireSpec{RouteID: packet.WireID})
 	extraRaw, err := p2p.EncodeUDPPacket(extraAck)
 	if err != nil {
 		logs.Trace("[P2P] extra reply fail port=%d target=%s err=%v", listenPort, target.String(), err)

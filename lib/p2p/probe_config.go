@@ -21,6 +21,26 @@ func HasProbeProvider(probe P2PProbeConfig, provider string) bool {
 	return false
 }
 
+func HasUsableProbeEndpoint(probe P2PProbeConfig) bool {
+	for _, endpoint := range NormalizeProbeEndpoints(probe) {
+		if isSupportedProbeEndpoint(endpoint) {
+			return true
+		}
+	}
+	return false
+}
+
+func isSupportedProbeEndpoint(endpoint P2PProbeEndpoint) bool {
+	switch {
+	case endpoint.Provider == ProbeProviderNPS && endpoint.Mode == ProbeModeUDP && endpoint.Network == ProbeNetworkUDP:
+		return true
+	case endpoint.Provider == ProbeProviderSTUN && endpoint.Mode == ProbeModeBinding && endpoint.Network == ProbeNetworkUDP:
+		return true
+	default:
+		return false
+	}
+}
+
 func WithDefaultSTUNEndpoints(probe P2PProbeConfig, servers []string) P2PProbeConfig {
 	if len(servers) == 0 || HasProbeProvider(probe, ProbeProviderSTUN) {
 		return probe

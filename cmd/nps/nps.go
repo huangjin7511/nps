@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/beego/beego"
 	"github.com/djylb/nps/bridge"
 	"github.com/djylb/nps/lib/common"
 	"github.com/djylb/nps/lib/crypt"
@@ -19,11 +18,13 @@ import (
 	"github.com/djylb/nps/lib/file"
 	"github.com/djylb/nps/lib/install"
 	"github.com/djylb/nps/lib/logs"
+	"github.com/djylb/nps/lib/servercfg"
 	"github.com/djylb/nps/lib/version"
 	"github.com/djylb/nps/server"
 	"github.com/djylb/nps/server/connection"
 	"github.com/djylb/nps/server/tool"
 	"github.com/djylb/nps/web/routers"
+	"github.com/gin-gonic/gin"
 	"github.com/kardianos/service"
 	flag "github.com/spf13/pflag"
 )
@@ -72,31 +73,37 @@ func main() {
 
 	// set config path
 	if cp := strings.TrimSpace(*confPath); cp != "" {
-		common.ConfPath = cp
-	}
-
-	if err := beego.LoadAppConfig("ini", filepath.Join(common.GetRunPath(), "conf", "nps.conf")); err != nil {
-		log.Println("load config file error", err.Error())
-		if err := beego.LoadAppConfig("ini", filepath.Join(common.GetAppPath(), "conf", "nps.conf")); err != nil {
-			log.Fatalln("load config file error", err.Error())
+		if servercfg.IsSupportedConfigPath(cp) {
+			servercfg.SetPreferredPath(cp)
+			common.ConfPath = filepath.Dir(cp)
+		} else {
+			common.ConfPath = cp
 		}
 	}
 
-	pprofIp := beego.AppConfig.String("pprof_ip")
-	pprofPort := beego.AppConfig.DefaultString("pprof_port", "0")
+	if err := servercfg.LoadDefault(); err != nil {
+		log.Fatalln("load config file error", err.Error())
+	}
+	cfg := servercfg.Current()
+	if strings.TrimSpace(os.Getenv("GIN_MODE")) == "" {
+		gin.SetMode(gin.ReleaseMode)
+	}
+
+	pprofIp := cfg.App.PprofIP
+	pprofPort := cfg.App.PprofPort
 	if pprofPort != "0" {
 		pprofAddr := common.BuildAddress(pprofIp, pprofPort)
 		common.InitPProfByAddr(pprofAddr)
 	}
 
-	err := common.SetTimezone(beego.AppConfig.String("timezone"))
+	err := common.SetTimezone(cfg.App.Timezone)
 	if err != nil {
 		logs.Warn("Set timezone error %v", err)
 	}
-	common.SetCustomDNS(beego.AppConfig.String("dns_server"))
-	logType := beego.AppConfig.DefaultString("log", "stdout")
-	logLevel = beego.AppConfig.DefaultString("log_level", "trace")
-	logPath := beego.AppConfig.String("log_path")
+	common.SetCustomDNS(cfg.App.DNSServer)
+	logType := cfg.Log.Type
+	logLevel = cfg.Log.Level
+	logPath := cfg.Log.Path
 	if logPath == "" || strings.EqualFold(logPath, "on") || strings.EqualFold(logPath, "true") {
 		logPath = common.GetLogPath()
 	}
@@ -108,11 +115,11 @@ func main() {
 			logPath = strings.ReplaceAll(logPath, "\\", "\\\\")
 		}
 	}
-	logMaxFiles := beego.AppConfig.DefaultInt("log_max_files", 30)
-	logMaxDays := beego.AppConfig.DefaultInt("log_max_days", 30)
-	logMaxSize := beego.AppConfig.DefaultInt("log_max_size", 5)
-	logCompress := beego.AppConfig.DefaultBool("log_compress", false)
-	logColor := beego.AppConfig.DefaultBool("log_color", true)
+	logMaxFiles := cfg.Log.MaxFiles
+	logMaxDays := cfg.Log.MaxDays
+	logMaxSize := cfg.Log.MaxSize
+	logCompress := cfg.Log.Compress
+	logColor := cfg.Log.Color
 
 	// init service
 	options := make(service.KeyValue)
@@ -285,40 +292,37 @@ func (p *nps) run() error {
 }
 
 func run() {
-	routers.Init()
+	cfg := servercfg.Current()
+	server.SetWebHandler(routers.Init())
 	task := &file.Tunnel{
 		Mode: "webServer",
 	}
-	if beego.AppConfig.DefaultBool("secure_mode", false) {
+	if cfg.Security.SecureMode {
 		bridge.ServerSecureMode = true
 	}
-	logs.Info("the config path is: %s", common.GetRunPath())
+	logs.Info("the config path is: %s", servercfg.Path())
 	logs.Info("the version of server is %s, allow client core version to be %s", version.VERSION, version.GetMinVersion(bridge.ServerSecureMode))
-	_ = bridge.SetClientSelectMode(beego.AppConfig.DefaultString("bridge_select_mode", ""))
-	ntpServer := beego.AppConfig.DefaultString("ntp_server", "")
-	ntpInterval := beego.AppConfig.DefaultInt("ntp_interval", 5)
+	_ = bridge.SetClientSelectMode(cfg.Bridge.SelectMode)
+	ntpServer := cfg.App.NTPServer
+	ntpInterval := cfg.App.NTPInterval
 	common.SetNtpServer(ntpServer)
 	common.SetNtpInterval(time.Duration(ntpInterval) * time.Minute)
 	go common.SyncTime()
 	connection.InitConnectionService()
 	//crypt.InitTls(filepath.Join(common.GetRunPath(), "conf", "server.pem"), filepath.Join(common.GetRunPath(), "conf", "server.key"))
-	cert, ok := common.LoadCert(beego.AppConfig.String("bridge_cert_file"), beego.AppConfig.String("bridge_key_file"))
+	cert, ok := common.LoadCert(cfg.Bridge.CertFile, cfg.Bridge.KeyFile)
 	if !ok {
 		logs.Info("Using randomly generated certificate.")
 	}
 	crypt.InitTls(cert)
 	tool.InitAllowPort()
 	tool.StartSystemInfo()
-	timeout := beego.AppConfig.DefaultInt("disconnect_timeout", 30)
-	bridgeType := beego.AppConfig.DefaultString("bridge_type", "both")
-	bridge.ServerKcpEnable = beego.AppConfig.DefaultBool("kcp_enable", true) && connection.BridgeKcpPort != 0 && (bridgeType == "kcp" || bridgeType == "udp" || bridgeType == "both")
-	bridge.ServerQuicEnable = beego.AppConfig.DefaultBool("quic_enable", true) && connection.BridgeQuicPort != 0 && (bridgeType == "quic" || bridgeType == "udp" || bridgeType == "both")
-	if bridgeType == "both" {
-		bridgeType = "tcp"
-	}
-	bridge.ServerTcpEnable = beego.AppConfig.DefaultBool("tcp_enable", true) && connection.BridgeTcpPort != 0 && bridgeType == "tcp"
-	bridge.ServerTlsEnable = beego.AppConfig.DefaultBool("tls_enable", true) && connection.BridgeTlsPort != 0 && bridgeType == "tcp"
-	bridge.ServerWsEnable = beego.AppConfig.DefaultBool("ws_enable", true) && connection.BridgeWsPort != 0 && connection.BridgePath != "" && bridgeType == "tcp"
-	bridge.ServerWssEnable = beego.AppConfig.DefaultBool("wss_enable", true) && connection.BridgeWssPort != 0 && connection.BridgePath != "" && bridgeType == "tcp"
+	timeout := cfg.Runtime.DisconnectTimeout
+	bridge.ServerKcpEnable = cfg.Bridge.ServerKCPEnabled
+	bridge.ServerQuicEnable = cfg.Bridge.ServerQUICEnabled
+	bridge.ServerTcpEnable = cfg.Bridge.ServerTCPEnabled
+	bridge.ServerTlsEnable = cfg.Bridge.ServerTLSEnabled
+	bridge.ServerWsEnable = cfg.Bridge.ServerWSEnabled
+	bridge.ServerWssEnable = cfg.Bridge.ServerWSSEnabled
 	go server.StartNewServer(task, timeout)
 }

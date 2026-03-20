@@ -5,11 +5,11 @@ package daemon
 import (
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 
-	"github.com/beego/beego"
-	"github.com/djylb/nps/lib/common"
+	"github.com/djylb/nps/lib/servercfg"
+	"github.com/djylb/nps/server"
+	"github.com/djylb/nps/web/routers"
 )
 
 func init() {
@@ -18,7 +18,10 @@ func init() {
 	go func() {
 		for {
 			<-s
-			_ = beego.LoadAppConfig("ini", filepath.Join(common.GetRunPath(), "conf", "nps.conf"))
+			if err := servercfg.Reload(); err != nil {
+				continue
+			}
+			server.SetWebHandler(routers.Init())
 		}
 	}()
 }

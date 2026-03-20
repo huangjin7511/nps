@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,12 +39,20 @@ type P2PManager struct {
 	udpConn      net.Conn
 	muxSession   *mux.Mux
 	quicConn     *quic.Conn
+	quicPacket   net.PacketConn
 	uuid         string
 	secretConn   any
 	statusOK     bool
 	statusCh     chan struct{}
 	proxyServers []Closer
 	lastActive   time.Time
+}
+
+type p2pTransportState struct {
+	udpConn    net.Conn
+	muxSession *mux.Mux
+	quicConn   *quic.Conn
+	quicPacket net.PacketConn
 }
 
 type P2pBridge struct {
@@ -102,7 +111,11 @@ func (b *P2pBridge) SendLinkInfo(_ int, link *conn.Link, _ *file.Tunnel) (net.Co
 	}
 	mgr := b.mgr
 	var lastErr error
-	ctx, cancel := context.WithTimeout(mgr.ctx, 1000*time.Millisecond)
+	waitTimeout := b.timeout
+	if waitTimeout <= 0 {
+		waitTimeout = time.Second
+	}
+	ctx, cancel := context.WithTimeout(mgr.ctx, waitTimeout)
 	defer cancel()
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
@@ -119,9 +132,7 @@ func (b *P2pBridge) SendLinkInfo(_ int, link *conn.Link, _ *file.Tunnel) (net.Co
 		}
 		select {
 		case <-ctx.Done():
-			mgr.mu.Lock()
-			mgr.statusOK = false
-			mgr.mu.Unlock()
+			mgr.resetStatus(false)
 			if lastErr != nil {
 				return nil, fmt.Errorf("timeout waiting P2P tunnel; last error: %w", lastErr)
 			}
@@ -483,10 +494,11 @@ func (mgr *P2PManager) handleUdpMonitor(cfg *config.CommonConfig, l *config.Loca
 
 	const maxRetry = 300
 	const natHardFailLimit = 6
-	var addrRetry int
 	var notReadyRetry int
 	var natHardFailCount int
-	var hardNATPunchDisabled bool
+	var natHardBackoffLevel int
+	var nextHardNATRetry time.Time
+	preferredLocalAddr := preferredP2PLocalAddr(cfg.LocalIP)
 
 	for {
 		select {
@@ -499,56 +511,21 @@ func (mgr *P2PManager) handleUdpMonitor(cfg *config.CommonConfig, l *config.Loca
 		mgr.mu.Lock()
 		ok := mgr.statusOK && (mgr.udpConn != nil || (mgr.quicConn != nil && mgr.quicConn.Context().Err() == nil))
 		if ok {
-			addrRetry = 0
 			notReadyRetry = 0
 			natHardFailCount = 0
-			hardNATPunchDisabled = false
+			natHardBackoffLevel = 0
+			nextHardNATRetry = time.Time{}
 			mgr.mu.Unlock()
 			continue
 		}
-		if mgr.udpConn != nil {
-			_ = mgr.udpConn.Close()
-			mgr.udpConn = nil
-		}
-		if mgr.quicConn != nil {
-			if mgr.quicConn.Context().Err() != nil {
-				logs.Debug("quic connection context error: %v", mgr.quicConn.Context().Err())
-			}
-			_ = mgr.quicConn.CloseWithError(0, "monitor close")
-			mgr.quicConn = nil
-		}
 		mgr.mu.Unlock()
+		closeP2PTransport(mgr.clearActiveTransport(), "monitor close")
 
-		if hardNATPunchDisabled {
+		if !nextHardNATRetry.IsZero() && time.Now().Before(nextHardNATRetry) {
 			continue
 		}
 
-		addrV4, errV4 := common.GetLocalUdp4Addr()
-		if errV4 != nil {
-			logs.Warn("Failed to get local IPv4 address: %v", errV4)
-		} else {
-			logs.Debug("IPv4 address: %v", addrV4)
-		}
-
-		addrV6, errV6 := common.GetLocalUdp6Addr()
-		if errV6 != nil {
-			logs.Warn("Failed to get local IPv6 address: %v", errV6)
-		} else {
-			logs.Debug("IPv6 address: %v", addrV6)
-		}
-
-		if errV4 != nil && errV6 != nil {
-			addrRetry++
-			if addrRetry >= maxRetry {
-				logs.Error("Both IPv4 and IPv6 address retrieval failed %d times, exiting.", addrRetry)
-				mgr.resetStatus(false)
-				return
-			}
-			logs.Warn("No local IP available yet (retry %d/%d).", addrRetry, maxRetry)
-			continue
-		}
-		addrRetry = 0
-
+		roundHadHardNAT := false
 		for i := 0; i < 3; i++ {
 			logs.Debug("try P2P hole punch %d", i+1)
 			select {
@@ -556,44 +533,41 @@ func (mgr *P2PManager) handleUdpMonitor(cfg *config.CommonConfig, l *config.Loca
 				return
 			default:
 			}
-			if errV4 == nil {
-				tryErr := mgr.newUdpConn(addrV4.String(), cfg, l)
-				if errors.Is(tryErr, p2p.ErrNATNotSupportP2P) {
-					natHardFailCount++
-				}
-				mgr.mu.Lock()
-				if mgr.statusOK {
-					mgr.mu.Unlock()
-					break
-				}
+			tryErr := mgr.newUdpConn(preferredLocalAddr, cfg, l)
+			if errors.Is(tryErr, p2p.ErrNATNotSupportP2P) {
+				natHardFailCount++
+				roundHadHardNAT = true
+			}
+			mgr.mu.Lock()
+			if mgr.statusOK {
 				mgr.mu.Unlock()
+				break
+			}
+			mgr.mu.Unlock()
+			if !errors.Is(tryErr, p2p.ErrNATNotSupportP2P) {
 				notReadyRetry++
 			}
-			if errV6 == nil {
-				tryErr := mgr.newUdpConn(addrV6.String(), cfg, l)
-				if errors.Is(tryErr, p2p.ErrNATNotSupportP2P) {
-					natHardFailCount++
-				}
-				mgr.mu.Lock()
-				if mgr.statusOK {
-					mgr.mu.Unlock()
-					break
-				}
-				mgr.mu.Unlock()
-				notReadyRetry++
+			if !sleepWithContext(mgr.ctx, 50*time.Millisecond) {
+				return
 			}
-			time.Sleep(50 * time.Millisecond)
 		}
 
 		mgr.mu.Lock()
 		stillBad := !mgr.statusOK
 		mgr.mu.Unlock()
+		if !roundHadHardNAT {
+			natHardFailCount = 0
+			natHardBackoffLevel = 0
+			nextHardNATRetry = time.Time{}
+		}
 		if stillBad {
 			if natHardFailCount >= natHardFailLimit {
-				if !hardNATPunchDisabled {
-					logs.Warn("P2P hard-NAT handshake failed %d times, disable punching and keep relay/secret available.", natHardFailCount)
-				}
-				hardNATPunchDisabled = true
+				natHardBackoffLevel++
+				delay := p2pHardNATRetryDelay(natHardBackoffLevel)
+				nextHardNATRetry = time.Now().Add(delay)
+				natHardFailCount = 0
+				notReadyRetry = 0
+				logs.Warn("P2P hard-NAT handshake failed repeatedly, back off punching for %s and keep relay/secret available.", delay)
 				continue
 			}
 			if notReadyRetry >= maxRetry {
@@ -608,7 +582,7 @@ func (mgr *P2PManager) handleUdpMonitor(cfg *config.CommonConfig, l *config.Loca
 	}
 }
 
-func (mgr *P2PManager) newUdpConn(localAddr string, cfg *config.CommonConfig, l *config.LocalServer) error {
+func (mgr *P2PManager) newUdpConn(preferredLocalAddr string, cfg *config.CommonConfig, l *config.LocalServer) error {
 	mgr.mu.Lock()
 	secretConn := mgr.secretConn
 	mgr.mu.Unlock()
@@ -616,7 +590,7 @@ func (mgr *P2PManager) newUdpConn(localAddr string, cfg *config.CommonConfig, l 
 	var rawConn net.Conn
 	var remoteConn *conn.Conn
 	if secretConn != nil {
-		switch tun := mgr.secretConn.(type) {
+		switch tun := secretConn.(type) {
 		case *mux.Mux:
 			rawConn, err = tun.NewConn()
 			if err != nil {
@@ -647,11 +621,13 @@ func (mgr *P2PManager) newUdpConn(localAddr string, cfg *config.CommonConfig, l 
 		if err != nil {
 			logs.Error("Failed to connect to server: %v", err)
 			if AutoReconnect {
-				time.Sleep(5 * time.Second)
+				if !sleepWithContext(mgr.ctx, 5*time.Second) {
+					return mgr.ctx.Err()
+				}
 			} else {
 				mgr.pCancel()
 			}
-			return nil
+			return err
 		}
 		mgr.mu.Lock()
 		if mgr.uuid == "" {
@@ -664,7 +640,7 @@ func (mgr *P2PManager) newUdpConn(localAddr string, cfg *config.CommonConfig, l 
 	}
 	if remoteConn == nil {
 		logs.Error("Get conn failed: %v", err)
-		return nil
+		return err
 	}
 	defer func() { _ = remoteConn.Close() }()
 	mgr.mu.Lock()
@@ -674,26 +650,30 @@ func (mgr *P2PManager) newUdpConn(localAddr string, cfg *config.CommonConfig, l 
 	if err != nil {
 		logs.Error("Failed to send type to server: %v", err)
 		if AutoReconnect {
-			time.Sleep(5 * time.Second)
+			if !sleepWithContext(mgr.ctx, 5*time.Second) {
+				return mgr.ctx.Err()
+			}
 		} else {
 			mgr.pCancel()
 		}
-		return nil
+		return err
 	}
 	if _, err := remoteConn.Write([]byte(crypt.Md5(l.Password))); err != nil {
 		logs.Error("Failed to send password to server: %v", err)
 		if AutoReconnect {
-			time.Sleep(5 * time.Second)
+			if !sleepWithContext(mgr.ctx, 5*time.Second) {
+				return mgr.ctx.Err()
+			}
 		} else {
 			mgr.pCancel()
 		}
-		return nil
+		return err
 	}
 
 	var remoteAddr, sessionID, role, mode, data string
 	var transportTimeout time.Duration
 	var localConn net.PacketConn
-	localConn, remoteAddr, localAddr, sessionID, role, mode, data, transportTimeout, err = p2p.RunVisitorSession(mgr.ctx, remoteConn, localAddr, P2PMode, "", p2p.ParseSTUNServerList(cfg.P2PStunServers))
+	localConn, remoteAddr, preferredLocalAddr, sessionID, role, mode, data, transportTimeout, err = p2p.RunVisitorSession(mgr.ctx, remoteConn, preferredLocalAddr, P2PMode, "", p2p.ParseSTUNServerList(cfg.P2PStunServers))
 	if err != nil {
 		logs.Error("Run visitor P2P session failed: %v", err)
 		return err
@@ -709,14 +689,14 @@ func (mgr *P2PManager) newUdpConn(localAddr string, cfg *config.CommonConfig, l 
 		Role:       role,
 		Stage:      "transport_start",
 		Status:     "ok",
-		LocalAddr:  localAddr,
+		LocalAddr:  preferredLocalAddr,
 		RemoteAddr: remoteAddr,
 		Detail:     mode,
 		Meta: map[string]string{
 			"transport_mode": mode,
 		},
 	})
-	logs.Debug("visitor p2p result local=%s remote=%s role=%s mode=%s data=%s", localAddr, remoteAddr, role, mode, data)
+	logs.Debug("visitor p2p result local=%s remote=%s role=%s mode=%s data=%s", preferredLocalAddr, remoteAddr, role, mode, data)
 
 	var udpTunnel net.Conn
 	var sess *quic.Conn
@@ -729,12 +709,12 @@ func (mgr *P2PManager) newUdpConn(localAddr string, cfg *config.CommonConfig, l 
 			Role:       role,
 			Stage:      "transport_fail_stage",
 			Status:     "fail",
-			LocalAddr:  localAddr,
+			LocalAddr:  preferredLocalAddr,
 			RemoteAddr: remoteAddr,
 			Detail:     "resolve_remote",
 		})
 		_ = localConn.Close()
-		return nil
+		return err
 	}
 
 	if mode == common.CONN_QUIC {
@@ -748,12 +728,12 @@ func (mgr *P2PManager) newUdpConn(localAddr string, cfg *config.CommonConfig, l 
 				Role:       role,
 				Stage:      "transport_fail_stage",
 				Status:     "fail",
-				LocalAddr:  localAddr,
+				LocalAddr:  preferredLocalAddr,
 				RemoteAddr: remoteAddr,
 				Detail:     "quic_dial",
 			})
 			_ = localConn.Close()
-			return nil
+			return err
 		}
 		state := sess.ConnectionState().TLS
 		if len(state.PeerCertificates) == 0 {
@@ -763,12 +743,12 @@ func (mgr *P2PManager) newUdpConn(localAddr string, cfg *config.CommonConfig, l 
 				Role:       role,
 				Stage:      "transport_fail_stage",
 				Status:     "fail",
-				LocalAddr:  localAddr,
+				LocalAddr:  preferredLocalAddr,
 				RemoteAddr: remoteAddr,
 				Detail:     "quic_cert_missing",
 			})
 			_ = localConn.Close()
-			return nil
+			return errors.New("quic certificate missing")
 		}
 		leaf := state.PeerCertificates[0]
 		if data != string(crypt.GetHMAC(cfg.VKey, leaf.Raw)) {
@@ -778,12 +758,12 @@ func (mgr *P2PManager) newUdpConn(localAddr string, cfg *config.CommonConfig, l 
 				Role:       role,
 				Stage:      "transport_fail_stage",
 				Status:     "fail",
-				LocalAddr:  localAddr,
+				LocalAddr:  preferredLocalAddr,
 				RemoteAddr: remoteAddr,
 				Detail:     "quic_cert_verify",
 			})
 			_ = localConn.Close()
-			return nil
+			return errors.New("quic certificate verify failed")
 		}
 	} else {
 		kcpTunnel, err := conn.NewKCPSessionWithConn(rUDPAddr, localConn)
@@ -794,12 +774,12 @@ func (mgr *P2PManager) newUdpConn(localAddr string, cfg *config.CommonConfig, l 
 				Role:       role,
 				Stage:      "transport_fail_stage",
 				Status:     "fail",
-				LocalAddr:  localAddr,
+				LocalAddr:  preferredLocalAddr,
 				RemoteAddr: remoteAddr,
 				Detail:     "kcp_create",
 			})
 			_ = localConn.Close()
-			return nil
+			return err
 		}
 		udpTunnel = kcpTunnel
 	}
@@ -808,35 +788,118 @@ func (mgr *P2PManager) newUdpConn(localAddr string, cfg *config.CommonConfig, l 
 		Role:       role,
 		Stage:      "transport_established",
 		Status:     "ok",
-		LocalAddr:  localAddr,
+		LocalAddr:  preferredLocalAddr,
 		RemoteAddr: remoteAddr,
 		Detail:     mode,
 	})
 
 	logs.Info("P2P UDP[%s] tunnel established to %s, role[%s]", mode, remoteAddr, role)
 
+	closeP2PTransport(mgr.installActiveTransport(mode, udpTunnel, sess, localConn, cfg.DisconnectTime), "new connection")
+	return nil
+}
+
+func preferredP2PLocalAddr(localIP string) string {
+	localIP = strings.TrimSpace(localIP)
+	localIP = strings.Trim(localIP, "[]")
+	if localIP == "" {
+		return ""
+	}
+	if ip := net.ParseIP(localIP); ip != nil {
+		if ip.IsUnspecified() {
+			return ""
+		}
+		return ip.String()
+	}
+	return localIP
+}
+
+func p2pHardNATRetryDelay(level int) time.Duration {
+	if level < 1 {
+		level = 1
+	}
+	delay := 15 * time.Second
+	for i := 1; i < level; i++ {
+		delay *= 2
+		if delay >= 2*time.Minute {
+			return 2 * time.Minute
+		}
+	}
+	return delay
+}
+
+func sleepWithContext(ctx context.Context, d time.Duration) bool {
+	if d <= 0 {
+		return true
+	}
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func closeP2PTransport(state p2pTransportState, reason string) {
+	if state.muxSession != nil {
+		_ = state.muxSession.Close()
+	}
+	if state.udpConn != nil {
+		_ = state.udpConn.Close()
+	}
+	if state.quicConn != nil {
+		if state.quicConn.Context().Err() != nil {
+			logs.Debug("quic connection context error: %v", state.quicConn.Context().Err())
+		}
+		_ = state.quicConn.CloseWithError(0, reason)
+	}
+	if state.quicPacket != nil {
+		_ = state.quicPacket.Close()
+	}
+}
+
+func (mgr *P2PManager) clearActiveTransport() p2pTransportState {
 	mgr.mu.Lock()
-	mgr.lastActive = time.Now()
-	if mgr.udpConn != nil {
-		_ = mgr.udpConn.Close()
+	defer mgr.mu.Unlock()
+	state := p2pTransportState{
+		udpConn:    mgr.udpConn,
+		muxSession: mgr.muxSession,
+		quicConn:   mgr.quicConn,
+		quicPacket: mgr.quicPacket,
 	}
-	if mgr.muxSession != nil {
-		_ = mgr.muxSession.Close()
-	}
-	if mgr.quicConn != nil {
-		_ = mgr.quicConn.CloseWithError(0, "new connection")
+	mgr.udpConn = nil
+	mgr.muxSession = nil
+	mgr.quicConn = nil
+	mgr.quicPacket = nil
+	mgr.statusOK = false
+	return state
+}
+
+func (mgr *P2PManager) installActiveTransport(mode string, udpTunnel net.Conn, quicConn *quic.Conn, quicPacket net.PacketConn, disconnectTime int) p2pTransportState {
+	mgr.mu.Lock()
+	defer mgr.mu.Unlock()
+	previous := p2pTransportState{
+		udpConn:    mgr.udpConn,
+		muxSession: mgr.muxSession,
+		quicConn:   mgr.quicConn,
+		quicPacket: mgr.quicPacket,
 	}
 	if mode == common.CONN_QUIC {
-		mgr.quicConn = sess
+		mgr.quicConn = quicConn
+		mgr.quicPacket = quicPacket
 		mgr.udpConn = nil
 		mgr.muxSession = nil
 	} else {
 		mgr.udpConn = udpTunnel
-		mgr.muxSession = mux.NewMux(udpTunnel, "kcp", cfg.DisconnectTime, false)
+		mgr.muxSession = mux.NewMux(udpTunnel, "kcp", disconnectTime, false)
+		mgr.quicConn = nil
+		mgr.quicPacket = nil
 	}
+	mgr.lastActive = time.Now()
 	mgr.statusOK = true
-	mgr.mu.Unlock()
-	return nil
+	return previous
 }
 
 func (mgr *P2PManager) resetStatus(ok bool) {
@@ -856,24 +919,16 @@ func (mgr *P2PManager) Close() {
 	mgr.cancel()
 	mgr.mu.Lock()
 	psList := mgr.proxyServers
-	udp := mgr.udpConn
-	muxSess := mgr.muxSession
-	qConn := mgr.quicConn
 	secretConn := mgr.secretConn
+	mgr.proxyServers = nil
+	mgr.secretConn = nil
 	mgr.mu.Unlock()
+	transport := mgr.clearActiveTransport()
 
 	for _, srv := range psList {
 		_ = srv.Close()
 	}
-	if udp != nil {
-		_ = udp.Close()
-	}
-	if muxSess != nil {
-		_ = muxSess.Close()
-	}
-	if qConn != nil {
-		_ = qConn.CloseWithError(0, "close quic")
-	}
+	closeP2PTransport(transport, "close quic")
 	if secretConn != nil {
 		switch tun := secretConn.(type) {
 		case *mux.Mux:

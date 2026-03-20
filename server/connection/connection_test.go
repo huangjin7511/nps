@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/beego/beego"
 	"github.com/djylb/nps/lib/mux"
+	"github.com/djylb/nps/lib/servercfg"
 )
 
 func writeTestConfig(t *testing.T, content string) string {
@@ -65,8 +65,8 @@ quic_max_incoming_streams = 999
 mux_ping_interval = 8
 `)
 
-	if err := beego.LoadAppConfig("ini", configPath); err != nil {
-		t.Fatalf("load app config: %v", err)
+	if err := servercfg.Load(configPath); err != nil {
+		t.Fatalf("load server config: %v", err)
 	}
 	pMux = nil
 

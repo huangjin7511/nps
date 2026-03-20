@@ -10,9 +10,12 @@ import (
 )
 
 func NewUdpConnByAddr(addr string) (net.PacketConn, error) {
-	udpAddr, err := net.ResolveUDPAddr("udp", addr)
+	udpAddr, network, bindAddr, exact, err := resolveUDPBindTarget(addr)
 	if err != nil {
 		return nil, err
+	}
+	if exact {
+		return net.ListenPacket(network, bindAddr)
 	}
 	port := common.GetPortStrByAddr(addr)
 

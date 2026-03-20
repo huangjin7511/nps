@@ -30,7 +30,7 @@ func (s *Bridge) GetHealthFromClient(id int, c *conn.Conn, client *Client, node 
 			//if !firstSuccess {
 			//	return
 			//}
-			logs.Trace("GetHealthInfo error, id=%d, retry=%d, err=%v", id, retry, err)
+			logs.Trace("GetHealthInfo error, id=%d, retry=%d, detail=%s", id, retry, conn.DescribeNetError(err, c.Conn))
 			break
 		}
 		//logs.Trace("GetHealthInfo: %v, %v, %v", info, err, status)

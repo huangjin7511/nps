@@ -14,7 +14,7 @@ func TestIsValidAuthKey(t *testing.T) {
 	configKey := "test-config-key"
 	valid := crypt.Md5(configKey + strconv.Itoa(timestamp))
 
-	if !isValidAuthKey(configKey, valid, timestamp, now) {
+	if !IsValidAuthKey(configKey, valid, timestamp, now) {
 		t.Fatal("expected auth key to be valid")
 	}
 }
@@ -41,7 +41,7 @@ func TestIsValidAuthKeyInvalidCases(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if isValidAuthKey(tt.configKey, tt.md5Key, tt.timestamp, tt.nowUnix) {
+			if IsValidAuthKey(tt.configKey, tt.md5Key, tt.timestamp, tt.nowUnix) {
 				t.Fatalf("expected auth key to be invalid for case %s", tt.name)
 			}
 		})

@@ -114,12 +114,15 @@ func DecryptWithPrivateKey(base64Cipher string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("base64 decode error: %w", err)
 	}
-	// Decrypt using PKCS#1 v1.5
+	plain, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, rsaKey, cipherBytes, nil)
+	if err == nil {
+		return plain, nil
+	}
 	//nolint:staticcheck // legacy PKCS1v15 compatibility
 	//lint:ignore SA1019 legacy PKCS1v15 compatibility
-	plain, err := rsa.DecryptPKCS1v15(rand.Reader, rsaKey, cipherBytes)
-	if err != nil {
-		return nil, fmt.Errorf("RSA decrypt error: %w", err)
+	plain, legacyErr := rsa.DecryptPKCS1v15(rand.Reader, rsaKey, cipherBytes)
+	if legacyErr != nil {
+		return nil, fmt.Errorf("RSA decrypt error: oaep: %w; pkcs1v15: %v", err, legacyErr)
 	}
 	return plain, nil
 }

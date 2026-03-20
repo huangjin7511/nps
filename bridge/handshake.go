@@ -357,10 +357,24 @@ func (s *Bridge) typeDeal(c *conn.Conn, id, ver int, vs, tunnelType string, firs
 		if ver > 4 {
 			go func() {
 				defer func() {
-					logs.Trace("Tunnel connection closed, client %d, remote %v", id, addr)
+					reason := tunnelCloseReason(anyConn)
+					if reason != "" {
+						logs.Trace("Tunnel connection closed, client %d, remote %v, reason: %s", id, addr, reason)
+					} else {
+						logs.Trace("Tunnel connection closed, client %d, remote %v", id, addr)
+					}
 					_ = c.Close()
 					_ = node.Close()
-					client.RemoveOfflineNodes(false)
+					removed := client.RemoveOfflineNodes(false)
+					logs.Warn(
+						"Disconnect summary event=disconnect_summary role=server client=%d uuid=%s remote=%v removed=%d remaining=%d reason=%q",
+						id,
+						uuid,
+						addr,
+						removed,
+						client.NodeCount(),
+						reason,
+					)
 				}()
 				switch t := anyConn.(type) {
 				case *mux.Mux:
@@ -551,13 +565,28 @@ func (s *Bridge) typeDeal(c *conn.Conn, id, ver int, vs, tunnelType string, firs
 			_ = c.Close()
 			return
 		}
-		session.attachProvider(c)
+		if !session.attachProvider(c) {
+			_ = c.Close()
+			return
+		}
 		go session.serve(common.WORK_P2P_PROVIDER, c)
 		return
 	}
 
 	c.SetAlive()
 	//return
+}
+
+func tunnelCloseReason(v any) string {
+	switch t := v.(type) {
+	case *mux.Mux:
+		return t.CloseReason()
+	case *quic.Conn:
+		if err := t.Context().Err(); err != nil {
+			return err.Error()
+		}
+	}
+	return ""
 }
 
 // register ip

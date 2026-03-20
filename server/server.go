@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/beego/beego"
 	"github.com/djylb/nps/bridge"
 	"github.com/djylb/nps/lib/common"
 	"github.com/djylb/nps/lib/conn"
@@ -16,6 +15,7 @@ import (
 	"github.com/djylb/nps/lib/index"
 	"github.com/djylb/nps/lib/logs"
 	"github.com/djylb/nps/lib/rate"
+	"github.com/djylb/nps/lib/servercfg"
 	"github.com/djylb/nps/lib/version"
 	"github.com/djylb/nps/server/connection"
 	"github.com/djylb/nps/server/proxy"
@@ -48,7 +48,8 @@ func init() {
 
 // InitFromDb init task from db
 func InitFromDb() {
-	if allowLocalProxy, _ := beego.AppConfig.Bool("allow_local_proxy"); allowLocalProxy {
+	cfg := servercfg.Current()
+	if cfg.Feature.AllowLocalProxy {
 		db := file.GetDb()
 		if _, err := db.GetClient(-1); err != nil {
 			local := new(file.Client)
@@ -70,7 +71,7 @@ func InitFromDb() {
 	}
 
 	//Add a public password
-	if vkey := beego.AppConfig.String("public_vkey"); vkey != "" {
+	if vkey := cfg.Runtime.PublicVKey; vkey != "" {
 		c := file.NewClient(vkey, true, true)
 		_ = file.GetDb().NewClient(c)
 		RunList.Store(c.Id, nil)
@@ -87,6 +88,7 @@ func InitFromDb() {
 
 // DealBridgeTask get bridge command
 func DealBridgeTask() {
+	cfg := servercfg.Current()
 	for {
 		select {
 		case h := <-Bridge.OpenHost:
@@ -119,9 +121,9 @@ func DealBridgeTask() {
 				logs.Trace("New secret connection, addr %v", s.Conn.Conn.RemoteAddr())
 				if t := file.GetDb().GetTaskByMd5Password(s.Password); t != nil {
 					if t.Status {
-						allowLocalProxy := beego.AppConfig.DefaultBool("allow_local_proxy", false)
-						allowSecretLink := beego.AppConfig.DefaultBool("allow_secret_link", false)
-						allowSecretLocal := beego.AppConfig.DefaultBool("allow_secret_local", false)
+						allowLocalProxy := cfg.Feature.AllowLocalProxy
+						allowSecretLink := cfg.Feature.AllowSecretLink
+						allowSecretLocal := cfg.Feature.AllowSecretLocal
 						go func() {
 							_ = proxy.NewSecretServer(Bridge, t, allowLocalProxy, allowSecretLink, allowSecretLocal).HandleSecret(s.Conn)
 						}()
@@ -140,15 +142,16 @@ func DealBridgeTask() {
 
 // StartNewServer start a new server
 func StartNewServer(cnf *file.Tunnel, bridgeDisconnect int) {
-	Bridge = bridge.NewTunnel(common.GetBoolByStr(beego.AppConfig.String("ip_limit")), &RunList, bridgeDisconnect)
+	cfg := servercfg.Current()
+	Bridge = bridge.NewTunnel(common.GetBoolByStr(cfg.Runtime.IPLimit), &RunList, bridgeDisconnect)
 	go func() {
 		if err := Bridge.StartTunnel(); err != nil {
 			logs.Error("start server bridge error %v", err)
 			os.Exit(1)
 		}
 	}()
-	if p, err := beego.AppConfig.Int("p2p_port"); err == nil {
-		extraReply := beego.AppConfig.DefaultBool("p2p_probe_extra_reply", true)
+	if p := cfg.Network.P2PPort; p > 0 {
+		extraReply := cfg.P2P.ProbeExtraReply
 		ok := true
 		for i := 0; i < 3; i++ {
 			port := p + i
@@ -211,7 +214,8 @@ func PingClient(id int, addr string) int {
 // NewMode new a server by mode name
 func NewMode(Bridge *bridge.Bridge, c *file.Tunnel) proxy.Service {
 	var service proxy.Service
-	allowLocalProxy := beego.AppConfig.DefaultBool("allow_local_proxy", false)
+	cfg := servercfg.Current()
+	allowLocalProxy := cfg.Feature.AllowLocalProxy
 	switch c.Mode {
 	case "tcp", "file":
 		service = proxy.NewTunnelModeServer(proxy.ProcessTunnel, Bridge, c, allowLocalProxy)
@@ -236,10 +240,9 @@ func NewMode(Bridge *bridge.Bridge, c *file.Tunnel) proxy.Service {
 		httpPort := connection.HttpPort
 		httpsPort := connection.HttpsPort
 		http3Port := connection.Http3Port
-		//useCache, _ := beego.AppConfig.Bool("http_cache")
-		//cacheLen, _ := beego.AppConfig.Int("http_cache_length")
-		addOrigin, _ := beego.AppConfig.Bool("http_add_origin_header")
-		httpOnlyPass := beego.AppConfig.String("x_nps_http_only")
+		// http cache settings are currently unused.
+		addOrigin := cfg.Proxy.AddOriginHeader
+		httpOnlyPass := cfg.Auth.HTTPOnlyPass
 		service = httpproxy.NewHttpProxy(Bridge, c, httpPort, httpsPort, http3Port, httpOnlyPass, addOrigin, allowLocalProxy, HttpProxyCache)
 	}
 	return service
@@ -283,7 +286,7 @@ func AddTask(t *file.Tunnel) error {
 		logs.Error("taskId %d start error port %d open failed", t.Id, t.Port)
 		return errors.New("the port open error")
 	}
-	if minute, err := beego.AppConfig.Int("flow_store_interval"); err == nil && minute > 0 {
+	if minute := servercfg.Current().Runtime.FlowStoreInterval; minute > 0 {
 		go flowSession(time.Minute * time.Duration(minute))
 	}
 	if svr := NewMode(Bridge, t); svr != nil {
@@ -390,7 +393,7 @@ func dealClientData() {
 			}
 			v.Version = ver
 		} else if v.Id <= 0 {
-			if allowLocalProxy, _ := beego.AppConfig.Bool("allow_local_proxy"); allowLocalProxy {
+			if servercfg.Current().Feature.AllowLocalProxy {
 				v.IsConnect = v.Status
 				v.Version = version.VERSION
 				v.Mode = "local"

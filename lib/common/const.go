@@ -28,6 +28,8 @@ const (
 	P2P_PUNCH_START    = "p2st"
 	P2P_PROBE_REPORT   = "p2pr"
 	P2P_PROBE_SUMMARY  = "p2sm"
+	P2P_PUNCH_READY    = "p2rd"
+	P2P_PUNCH_GO       = "p2go"
 	P2P_PUNCH_PROGRESS = "p2pg"
 	P2P_PUNCH_ABORT    = "p2ab"
 	NEW_TASK           = "task"

@@ -7,10 +7,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/beego/beego"
 	"github.com/djylb/nps/bridge"
 	"github.com/djylb/nps/lib/common"
 	"github.com/djylb/nps/lib/file"
+	"github.com/djylb/nps/lib/servercfg"
 	"github.com/djylb/nps/lib/version"
 	"github.com/djylb/nps/server/connection"
 	"github.com/djylb/nps/server/tool"
@@ -76,6 +76,7 @@ func InitDashboardData() {
 }
 
 func GetDashboardData(force bool) map[string]interface{} {
+	cfg := servercfg.Current()
 	cacheMu.RLock()
 	cached := dashboardCache
 	lastR := lastRefresh
@@ -84,7 +85,7 @@ func GetDashboardData(force bool) map[string]interface{} {
 
 	if cached != nil && !force && time.Since(lastFR) < 5*time.Second {
 		if time.Since(lastR) < 1*time.Second {
-			return cached
+			return cloneDashboardData(cached)
 		}
 
 		tcpCount := 0
@@ -151,9 +152,9 @@ func GetDashboardData(force bool) map[string]interface{} {
 		now := time.Now()
 
 		cacheMu.Lock()
-		dst := dashboardCache
+		dst := cloneDashboardData(dashboardCache)
 		if dst == nil {
-			dst = cached
+			dst = cloneDashboardData(cached)
 		}
 		dst["upTime"] = upTime
 		dst["tcpCount"] = tcpCount
@@ -178,10 +179,11 @@ func GetDashboardData(force bool) map[string]interface{} {
 		if ioRecv != nil {
 			dst["io_recv"] = ioRecv
 		}
+		dashboardCache = dst
 		lastRefresh = now
 		cacheMu.Unlock()
 
-		return dst
+		return cloneDashboardData(dst)
 	}
 
 	data := make(map[string]interface{})
@@ -189,7 +191,7 @@ func GetDashboardData(force bool) map[string]interface{} {
 	data["minVersion"] = GetMinVersion()
 	data["hostCount"] = common.GetSyncMapLen(&file.GetDb().JsonDb.Hosts)
 	data["clientCount"] = common.GetSyncMapLen(&file.GetDb().JsonDb.Clients)
-	if beego.AppConfig.String("public_vkey") != "" { // remove public vkey
+	if cfg.Runtime.PublicVKey != "" { // remove public vkey
 		data["clientCount"] = data["clientCount"].(int) - 1
 	}
 
@@ -251,22 +253,18 @@ func GetDashboardData(force bool) map[string]interface{} {
 	data["secretCount"] = secretN
 	data["p2pCount"] = p2pN
 
-	bridgeType := beego.AppConfig.String("bridge_type")
-	if bridgeType == "both" {
-		bridgeType = "tcp"
-	}
-	data["bridgeType"] = bridgeType
-	data["httpProxyPort"] = beego.AppConfig.String("http_proxy_port")
-	data["httpsProxyPort"] = beego.AppConfig.String("https_proxy_port")
-	data["ipLimit"] = beego.AppConfig.String("ip_limit")
-	data["flowStoreInterval"] = beego.AppConfig.String("flow_store_interval")
+	data["bridgeType"] = cfg.Bridge.PrimaryType
+	data["httpProxyPort"] = intStringOrEmpty(cfg.Network.HTTPProxyPort)
+	data["httpsProxyPort"] = intStringOrEmpty(cfg.Network.HTTPSProxyPort)
+	data["ipLimit"] = cfg.Runtime.IPLimit
+	data["flowStoreInterval"] = intStringOrEmpty(cfg.Runtime.FlowStoreInterval)
 	data["serverIp"] = common.GetServerIp(connection.P2pIp)
 	data["serverIpv4"] = common.GetOutboundIPv4().String()
 	data["serverIpv6"] = common.GetOutboundIPv6().String()
 	data["p2pIp"] = connection.P2pIp
 	data["p2pPort"] = connection.P2pPort
 	data["p2pAddr"] = common.BuildAddress(common.GetServerIp(connection.P2pIp), strconv.Itoa(connection.P2pPort))
-	data["logLevel"] = beego.AppConfig.String("log_level")
+	data["logLevel"] = cfg.Log.Level
 	data["upTime"] = common.GetRunTime()
 	data["upSecs"] = common.GetRunSecs()
 	data["startTime"] = common.GetStartTime()
@@ -334,7 +332,7 @@ func GetDashboardData(force bool) map[string]interface{} {
 	lastFullRefresh = now
 	cacheMu.Unlock()
 
-	return data
+	return cloneDashboardData(data)
 }
 
 func GetVersion() string {
@@ -347,4 +345,37 @@ func GetMinVersion() string {
 
 func GetCurrentYear() int {
 	return time.Now().Year()
+}
+
+func intStringOrEmpty(value int) string {
+	if value == 0 {
+		return ""
+	}
+	return strconv.Itoa(value)
+}
+
+func cloneDashboardData(src map[string]interface{}) map[string]interface{} {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]interface{}, len(src))
+	for key, value := range src {
+		dst[key] = cloneDashboardValue(value)
+	}
+	return dst
+}
+
+func cloneDashboardValue(value interface{}) interface{} {
+	switch v := value.(type) {
+	case map[string]interface{}:
+		return cloneDashboardData(v)
+	case []interface{}:
+		items := make([]interface{}, len(v))
+		for i, item := range v {
+			items[i] = cloneDashboardValue(item)
+		}
+		return items
+	default:
+		return value
+	}
 }

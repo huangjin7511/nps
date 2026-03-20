@@ -3,6 +3,7 @@ package mux
 import (
 	"encoding/binary"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"math/rand"
@@ -12,6 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	connx "github.com/djylb/nps/lib/conn"
 	"github.com/djylb/nps/lib/logs"
 )
 
@@ -60,6 +62,8 @@ type Mux struct {
 	writeQueue   priorityQueue
 	newConnQueue connQueue
 	once         sync.Once
+	reasonMu     sync.RWMutex
+	closeReason  string
 }
 
 func NewMux(c net.Conn, connType string, pingCheckThreshold int, isInitiator bool) *Mux {
@@ -125,10 +129,14 @@ func (s *Mux) isAliveTimeout(now time.Time) bool {
 }
 
 func normalizedPingJitter() time.Duration {
-	if PingJitter < 0 {
-		return -PingJitter
+	return absoluteDuration(PingJitter)
+}
+
+func absoluteDuration(d time.Duration) time.Duration {
+	if d < 0 {
+		return -d
 	}
-	return PingJitter
+	return d
 }
 
 func nextPingDelay() time.Duration {
@@ -149,7 +157,7 @@ func nextPingDelay() time.Duration {
 
 func (s *Mux) NewConn() (*Conn, error) {
 	if s.IsClosed() {
-		return nil, errors.New("the mux has closed")
+		return nil, s.closedErr("the mux has closed")
 	}
 	conn := NewConn(s.getId(), s)
 	// it must be Set before send
@@ -180,7 +188,7 @@ func (s *Mux) NewConn() (*Conn, error) {
 
 	case <-s.closeChan:
 		conn.closeLocal()
-		return nil, errors.New("create connection fail, the mux has closed")
+		return nil, s.closedErr("create connection fail, the mux has closed")
 
 	case <-timer.C:
 		conn.closeLocal()
@@ -191,7 +199,7 @@ func (s *Mux) NewConn() (*Conn, error) {
 func (s *Mux) Accept() (net.Conn, error) {
 	select {
 	case <-s.closeChan:
-		return nil, errors.New("accept error: the mux has closed")
+		return nil, s.closedErr("accept error: the mux has closed")
 	case conn, ok := <-s.newConnCh:
 		if !ok || conn == nil {
 			return nil, errors.New("accept error: the connection has been closed")
@@ -281,8 +289,9 @@ func (s *Mux) writeSession() {
 			err := pack.Pack(fw)
 			muxPack.Put(pack)
 			if err != nil {
-				logs.Println("mux: Pack err", err)
-				_ = s.Close()
+				reason := fmt.Sprintf("write session pack failed: %s", connx.DescribeNetError(err, s.conn))
+				logs.Error("mux: %s", reason)
+				_ = s.closeWithReason(reason)
 				break
 			}
 
@@ -305,8 +314,14 @@ func (s *Mux) ping() {
 			case <-timer.C:
 				now := time.Now()
 				if s.isAliveTimeout(now) {
-					logs.Println("mux: ping timeout, last alive", time.Unix(0, atomic.LoadInt64(&s.lastAliveTime)), "timeout", s.pingTimeout)
-					_ = s.Close()
+					reason := fmt.Sprintf("ping timeout last_alive=%s timeout=%s local=%v remote=%v",
+						time.Unix(0, atomic.LoadInt64(&s.lastAliveTime)).Format(time.RFC3339Nano),
+						s.pingTimeout,
+						s.conn.LocalAddr(),
+						s.conn.RemoteAddr(),
+					)
+					logs.Warn("mux: %s", reason)
+					_ = s.closeWithReason(reason)
 					return
 				}
 
@@ -394,8 +409,9 @@ func (s *Mux) readSession() {
 					muxPack.Put(pack)
 					return
 				}
-				logs.Println("mux: read session unpack from connection err", err)
-				_ = s.Close()
+				reason := fmt.Sprintf("read session unpack failed: %s", connx.DescribeNetError(err, s.conn))
+				logs.Error("mux: %s", reason)
+				_ = s.closeWithReason(reason)
 				muxPack.Put(pack)
 				return
 			}
@@ -520,6 +536,17 @@ func (s *Mux) IsClosed() bool {
 }
 
 func (s *Mux) Close() (err error) {
+	return s.closeWithReason("")
+}
+
+func (s *Mux) CloseReason() string {
+	s.reasonMu.RLock()
+	defer s.reasonMu.RUnlock()
+	return s.closeReason
+}
+
+func (s *Mux) closeWithReason(reason string) (err error) {
+	reason = s.setCloseReason(reason)
 	//buf := make([]byte, 1024*8)
 	//n := runtime.Stack(buf, false)
 	//fmt.Print(string(buf[:n]))
@@ -530,7 +557,11 @@ func (s *Mux) Close() (err error) {
 
 	s.once.Do(func() {
 		close(s.closeChan)
-		logs.Println("close mux")
+		if reason == "" {
+			logs.Println("close mux")
+		} else {
+			logs.Printf("close mux, reason: %s", reason)
+		}
 		s.connMap.Close()
 		//s.connMap = nil
 		//s.closeChan <- struct{}{}
@@ -545,6 +576,25 @@ func (s *Mux) Close() (err error) {
 		s.release()
 	})
 	return
+}
+
+func (s *Mux) setCloseReason(reason string) string {
+	if reason == "" {
+		return s.CloseReason()
+	}
+	s.reasonMu.Lock()
+	defer s.reasonMu.Unlock()
+	if s.closeReason == "" {
+		s.closeReason = reason
+	}
+	return s.closeReason
+}
+
+func (s *Mux) closedErr(prefix string) error {
+	if reason := s.CloseReason(); reason != "" {
+		return fmt.Errorf("%s (%s)", prefix, reason)
+	}
+	return errors.New(prefix)
 }
 
 func (s *Mux) release() {

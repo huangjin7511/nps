@@ -119,7 +119,7 @@ func runSTUNProbeEndpointDetailed(ctx context.Context, localConn net.PacketConn,
 	if timeout <= 0 {
 		timeout = defaultSTUNCalibrationTimeout
 	}
-	serverAddr, err := resolveUDPAddrContext(ctx, endpoint.Address, timeout)
+	serverAddr, err := resolveUDPAddrContext(ctx, localConn.LocalAddr(), endpoint.Address, timeout)
 	if err != nil {
 		return ProbeSample{}, nil, err
 	}
@@ -182,7 +182,7 @@ func runSTUNProbeEndpointDetailed(ctx context.Context, localConn net.PacketConn,
 	return ProbeSample{}, nil, fmt.Errorf("stun probe timeout")
 }
 
-func resolveUDPAddrContext(ctx context.Context, address string, timeout time.Duration) (*net.UDPAddr, error) {
+func resolveUDPAddrContext(ctx context.Context, localAddr net.Addr, address string, timeout time.Duration) (*net.UDPAddr, error) {
 	resolveCtx := ctx
 	cancel := func() {}
 	if timeout > 0 {
@@ -198,18 +198,35 @@ func resolveUDPAddrContext(ctx context.Context, address string, timeout time.Dur
 		return nil, err
 	}
 	if ip := net.ParseIP(strings.Trim(host, "[]")); ip != nil {
+		if familyMismatch(localAddr, ip) {
+			return nil, fmt.Errorf("resolved ip family mismatch for %s", address)
+		}
 		return &net.UDPAddr{IP: ip, Port: portNum}, nil
 	}
 	addrs, err := net.DefaultResolver.LookupIPAddr(resolveCtx, host)
 	if err != nil {
 		return nil, err
 	}
+	var fallback net.IP
 	for _, addr := range addrs {
 		if ip := common.NormalizeIP(addr.IP); ip != nil {
+			if familyMismatch(localAddr, ip) {
+				if fallback == nil {
+					fallback = ip
+				}
+				continue
+			}
 			return &net.UDPAddr{IP: ip, Port: portNum}, nil
 		}
 	}
+	if fallback != nil {
+		return nil, fmt.Errorf("resolved only incompatible ip family for %s", address)
+	}
 	return nil, fmt.Errorf("stun resolve returned no ip for %s", address)
+}
+
+func familyMismatch(localAddr net.Addr, ip net.IP) bool {
+	return !detectAddrFamily(localAddr).matchesIP(ip)
 }
 
 func decodeSTUNBindingResponse(data []byte, txID [pionstun.TransactionIDSize]byte) (stunResponseInfo, error) {

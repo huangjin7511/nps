@@ -1,12 +1,14 @@
 package p2p
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"errors"
 	"net"
 	"net/netip"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -20,6 +22,12 @@ func resetPredictionHistoryForTest() {
 	globalPredictionHistory.mu.Lock()
 	defer globalPredictionHistory.mu.Unlock()
 	globalPredictionHistory.entries = make(map[string]*predictionHistoryEntry)
+}
+
+func resetAdaptiveProfileHistoryForTest() {
+	globalAdaptiveProfileHistory.mu.Lock()
+	defer globalAdaptiveProfileHistory.mu.Unlock()
+	globalAdaptiveProfileHistory.entries = make(map[string]*adaptiveProfileEntry)
 }
 
 func TestBuildNatObservation(t *testing.T) {
@@ -63,7 +71,7 @@ func TestBuildNatObservationLowConfidence(t *testing.T) {
 	}
 }
 
-func TestBuildNatObservationSingleProbeIPKeepsLowConfidence(t *testing.T) {
+func TestBuildNatObservationSingleProbeIPMultiEndpointStillClassifiesMapping(t *testing.T) {
 	obs := BuildNatObservation([]ProbeSample{
 		{ProbePort: 10206, ObservedAddr: "1.1.1.1:4000", ServerReplyAddr: "10.0.0.1:10206"},
 		{ProbePort: 10207, ObservedAddr: "1.1.1.1:4002", ServerReplyAddr: "10.0.0.1:10207"},
@@ -72,39 +80,45 @@ func TestBuildNatObservationSingleProbeIPKeepsLowConfidence(t *testing.T) {
 	if obs.ProbeIPCount != 1 {
 		t.Fatalf("ProbeIPCount = %d, want 1", obs.ProbeIPCount)
 	}
-	if !obs.MappingConfidenceLow {
-		t.Fatal("single probe ip should keep mapping confidence low")
+	if obs.ProbeEndpointCount != 3 {
+		t.Fatalf("ProbeEndpointCount = %d, want 3", obs.ProbeEndpointCount)
 	}
-	if obs.NATType != NATTypeUnknown {
-		t.Fatalf("single probe ip nat type = %q, want unknown", obs.NATType)
+	if obs.MappingConfidenceLow {
+		t.Fatalf("single probe ip with multi-endpoint evidence should classify, got %#v", obs)
+	}
+	if obs.NATType != NATTypeSymmetric || obs.MappingBehavior != NATMappingEndpointDependent {
+		t.Fatalf("unexpected nat classification %#v", obs)
+	}
+	if obs.ClassificationLevel != ClassificationConfidenceMed {
+		t.Fatalf("ClassificationLevel = %q, want %q", obs.ClassificationLevel, ClassificationConfidenceMed)
 	}
 }
 
 func TestBuildNatObservationConflictingSignalsStayLowConfidence(t *testing.T) {
 	obs := BuildNatObservation([]ProbeSample{
 		{ProbePort: 10206, ObservedAddr: "1.1.1.1:4000", ServerReplyAddr: "10.0.0.1:10206"},
-		{ProbePort: 10207, ObservedAddr: "1.1.1.1:4002", ServerReplyAddr: "10.0.0.2:10207"},
+		{ProbePort: 10207, ObservedAddr: "2.2.2.2:4002", ServerReplyAddr: "10.0.0.2:10207"},
 		{ProbePort: 10208, ObservedAddr: "1.1.1.1:4004", ServerReplyAddr: "10.0.0.3:10208"},
 	}, false)
 	if !obs.ConflictingSignals {
-		t.Fatal("strict filtering with patterned mapping should be marked conflicting")
+		t.Fatal("multiple observed public IPs should be marked conflicting")
 	}
 	if !obs.MappingConfidenceLow {
 		t.Fatal("conflicting signals should stay low confidence")
 	}
 }
 
-func TestBuildNatObservationClassifiesConeWhenSTUNAndNPSAgree(t *testing.T) {
+func TestBuildNatObservationClassifiesRestrictedConeWhenSTUNAndNPSAgree(t *testing.T) {
 	obs := BuildNatObservation([]ProbeSample{
 		{EndpointID: "stun-1", Provider: ProbeProviderSTUN, Mode: ProbeModeBinding, ProbePort: 3478, ObservedAddr: "1.1.1.1:4000", ServerReplyAddr: "198.51.100.10:3478"},
 		{EndpointID: "stun-2", Provider: ProbeProviderSTUN, Mode: ProbeModeBinding, ProbePort: 3478, ObservedAddr: "1.1.1.1:4000", ServerReplyAddr: "198.51.100.11:3478"},
 		{ProbePort: 10206, Provider: ProbeProviderNPS, Mode: ProbeModeUDP, ObservedAddr: "1.1.1.1:4000", ServerReplyAddr: "203.0.113.10:10206"},
 	}, true)
-	if obs.NATType != NATTypeCone || obs.MappingBehavior != NATMappingEndpointIndependent || obs.FilteringBehavior != NATFilteringOpen {
+	if obs.NATType != NATTypeRestrictedCone || obs.MappingBehavior != NATMappingEndpointIndependent || obs.FilteringBehavior != NATFilteringOpen {
 		t.Fatalf("unexpected nat classification %#v", obs)
 	}
 	if obs.MappingConfidenceLow {
-		t.Fatalf("cone classification should not stay low confidence %#v", obs)
+		t.Fatalf("restricted cone classification should not stay low confidence %#v", obs)
 	}
 }
 
@@ -116,6 +130,26 @@ func TestBuildNatObservationClassifiesPortRestrictedWhenMappingStableAndExtraRep
 	}, false)
 	if obs.NATType != NATTypePortRestricted || obs.FilteringBehavior != NATFilteringPortRestricted {
 		t.Fatalf("unexpected nat classification %#v", obs)
+	}
+}
+
+func TestBuildNatObservationWithoutFilteringProbeKeepsFilteringUnknown(t *testing.T) {
+	obs := BuildNatObservationWithEvidence([]ProbeSample{
+		{EndpointID: "stun-1", Provider: ProbeProviderSTUN, Mode: ProbeModeBinding, ProbePort: 3478, ObservedAddr: "1.1.1.1:4000", ServerReplyAddr: "198.51.100.10:3478"},
+		{EndpointID: "stun-2", Provider: ProbeProviderSTUN, Mode: ProbeModeBinding, ProbePort: 3478, ObservedAddr: "1.1.1.1:4000", ServerReplyAddr: "198.51.100.11:3478"},
+		{ProbePort: 10206, Provider: ProbeProviderNPS, Mode: ProbeModeUDP, ObservedAddr: "1.1.1.1:4000", ServerReplyAddr: "203.0.113.10:10206"},
+	}, false, false)
+	if obs.FilteringTested {
+		t.Fatal("filtering should stay untested when extra-reply probe is disabled")
+	}
+	if obs.FilteringBehavior != NATFilteringUnknown {
+		t.Fatalf("FilteringBehavior = %q, want unknown", obs.FilteringBehavior)
+	}
+	if obs.NATType != NATTypeUnknown {
+		t.Fatalf("NATType = %q, want unknown", obs.NATType)
+	}
+	if obs.ProbePortRestricted {
+		t.Fatal("untested filtering should not be forced to port restricted")
 	}
 }
 
@@ -160,6 +194,111 @@ func TestMergeProbeSamplesPreservesClientReplyAndSTUNSamples(t *testing.T) {
 	obs := BuildNatObservation(merged, true)
 	if obs.ProbeIPCount != 2 {
 		t.Fatalf("ProbeIPCount = %d, want 2", obs.ProbeIPCount)
+	}
+}
+
+func TestMergeProbeSamplesKeepsDistinctNPSReplyIPsOnSameProbePort(t *testing.T) {
+	serverSamples := []ProbeSample{
+		{
+			Provider:        ProbeProviderNPS,
+			Mode:            ProbeModeUDP,
+			ProbePort:       10206,
+			ObservedAddr:    "1.1.1.1:4000",
+			ServerReplyAddr: "0.0.0.0:10206",
+		},
+		{
+			Provider:        ProbeProviderNPS,
+			Mode:            ProbeModeUDP,
+			ProbePort:       10207,
+			ObservedAddr:    "1.1.1.1:4002",
+			ServerReplyAddr: "0.0.0.0:10207",
+		},
+		{
+			Provider:        ProbeProviderNPS,
+			Mode:            ProbeModeUDP,
+			ProbePort:       10208,
+			ObservedAddr:    "1.1.1.1:4004",
+			ServerReplyAddr: "0.0.0.0:10208",
+		},
+	}
+	clientSamples := []ProbeSample{
+		{
+			Provider:        ProbeProviderNPS,
+			Mode:            ProbeModeUDP,
+			ProbePort:       10206,
+			ObservedAddr:    "1.1.1.1:4000",
+			ServerReplyAddr: "203.0.113.10:10206",
+		},
+		{
+			Provider:        ProbeProviderNPS,
+			Mode:            ProbeModeUDP,
+			ProbePort:       10207,
+			ObservedAddr:    "1.1.1.1:4002",
+			ServerReplyAddr: "203.0.113.10:10207",
+		},
+		{
+			Provider:        ProbeProviderNPS,
+			Mode:            ProbeModeUDP,
+			ProbePort:       10208,
+			ObservedAddr:    "1.1.1.1:4004",
+			ServerReplyAddr: "203.0.113.10:10208",
+		},
+		{
+			Provider:        ProbeProviderNPS,
+			Mode:            ProbeModeUDP,
+			ProbePort:       10206,
+			ObservedAddr:    "1.1.1.1:4010",
+			ServerReplyAddr: "203.0.113.11:10206",
+		},
+		{
+			Provider:        ProbeProviderNPS,
+			Mode:            ProbeModeUDP,
+			ProbePort:       10207,
+			ObservedAddr:    "1.1.1.1:4012",
+			ServerReplyAddr: "203.0.113.11:10207",
+		},
+		{
+			Provider:        ProbeProviderNPS,
+			Mode:            ProbeModeUDP,
+			ProbePort:       10208,
+			ObservedAddr:    "1.1.1.1:4014",
+			ServerReplyAddr: "203.0.113.11:10208",
+		},
+	}
+
+	merged := MergeProbeSamples(serverSamples, clientSamples)
+	if len(merged) != 6 {
+		t.Fatalf("len(merged) = %d, want 6 (%#v)", len(merged), merged)
+	}
+	for _, sample := range merged {
+		if strings.HasPrefix(sample.ServerReplyAddr, "0.0.0.0:") {
+			t.Fatalf("wildcard server sample should merge into concrete client samples, got %#v", merged)
+		}
+	}
+	obs := BuildNatObservation(merged, true)
+	if obs.ProbeIPCount != 2 {
+		t.Fatalf("ProbeIPCount = %d, want 2 (%#v)", obs.ProbeIPCount, merged)
+	}
+	if obs.MappingBehavior != NATMappingEndpointDependent || obs.NATType != NATTypeSymmetric {
+		t.Fatalf("unexpected nat classification %#v", obs)
+	}
+}
+
+func TestNPSProbeKeyIgnoresReplyPortButKeepsReplyIP(t *testing.T) {
+	keyA := npsProbeKey(10206, "203.0.113.10:10206")
+	keyB := npsProbeKey(10206, "203.0.113.10:49152")
+	keyC := npsProbeKey(10206, "203.0.113.11:10206")
+	if keyA == "" {
+		t.Fatal("expected concrete reply IP to produce a probe key")
+	}
+	if keyA != keyB {
+		t.Fatalf("same reply IP should share the same key: %q vs %q", keyA, keyB)
+	}
+	if keyA == keyC {
+		t.Fatalf("different reply IPs should not share the same key: %q vs %q", keyA, keyC)
+	}
+	if got := npsProbeKey(10206, "0.0.0.0:10206"); got != "" {
+		t.Fatalf("wildcard reply addr should not produce a key, got %q", got)
 	}
 }
 
@@ -214,6 +353,27 @@ func TestWithDefaultSTUNEndpointsAddsDefaultsOnlyWhenMissing(t *testing.T) {
 	}
 }
 
+func TestHasUsableProbeEndpointRequiresSupportedTransport(t *testing.T) {
+	if !HasUsableProbeEndpoint(P2PProbeConfig{
+		Provider: ProbeProviderNPS,
+		Mode:     ProbeModeUDP,
+		Network:  ProbeNetworkUDP,
+		Endpoints: []P2PProbeEndpoint{
+			{ID: "probe-1", Address: "1.1.1.1:10206"},
+		},
+	}) {
+		t.Fatal("supported NPS UDP probe endpoint should be usable")
+	}
+	if HasUsableProbeEndpoint(P2PProbeConfig{
+		Endpoints: []P2PProbeEndpoint{
+			{ID: "probe-1", Provider: ProbeProviderNPS, Mode: ProbeModeBinding, Network: ProbeNetworkUDP, Address: "1.1.1.1:10206"},
+			{ID: "stun-1", Provider: ProbeProviderSTUN, Mode: ProbeModeBinding, Network: "tcp", Address: "stun.example.com:3478"},
+		},
+	}) {
+		t.Fatal("unsupported probe endpoint transport should not be treated as usable")
+	}
+}
+
 func TestSelectPunchPlanPredictionDefaults(t *testing.T) {
 	plan := SelectPunchPlan(
 		P2PPeerInfo{Nat: NatObservation{ProbePortRestricted: true, MappingConfidenceLow: true}},
@@ -222,12 +382,6 @@ func TestSelectPunchPlanPredictionDefaults(t *testing.T) {
 	)
 	if !plan.EnablePrediction {
 		t.Fatal("restricted/low-confidence observation should enable prediction")
-	}
-	if !plan.EnableAggressivePrediction {
-		t.Fatal("default main path should keep aggressive prediction enabled")
-	}
-	if !plan.UseSingleLocalSocket {
-		t.Fatal("single local socket must stay enabled")
 	}
 	if !plan.UseTargetSpray {
 		t.Fatal("default main path should use target spray")
@@ -249,7 +403,27 @@ func TestSelectPunchPlanPredictionDefaults(t *testing.T) {
 	}
 }
 
-func TestSelectPunchPlanSingleProbeIPLowConfidenceTriggersPrediction(t *testing.T) {
+func TestPunchPlanNominationTimingCapsToHandshakeTimeout(t *testing.T) {
+	plan := PunchPlan{
+		HandshakeTimeout:        300 * time.Millisecond,
+		NominationDelay:         120 * time.Millisecond,
+		NominationRetryInterval: 300 * time.Millisecond,
+	}
+	if got := plan.nominationDelay(); got != 50*time.Millisecond {
+		t.Fatalf("nominationDelay() = %s, want %s", got, 50*time.Millisecond)
+	}
+	if got := plan.nominationRetryInterval(); got != 60*time.Millisecond {
+		t.Fatalf("nominationRetryInterval() = %s, want %s", got, 60*time.Millisecond)
+	}
+	if got := plan.renominationTimeout(); got != 75*time.Millisecond {
+		t.Fatalf("renominationTimeout() = %s, want %s", got, 75*time.Millisecond)
+	}
+	if got := plan.renominationCooldown(); got != 60*time.Millisecond {
+		t.Fatalf("renominationCooldown() = %s, want %s", got, 60*time.Millisecond)
+	}
+}
+
+func TestSelectPunchPlanSingleProbeIPMultiEndpointStillTriggersPrediction(t *testing.T) {
 	self := P2PPeerInfo{Nat: BuildNatObservation([]ProbeSample{
 		{ProbePort: 10206, ObservedAddr: "1.1.1.1:4000", ServerReplyAddr: "10.0.0.1:10206"},
 		{ProbePort: 10207, ObservedAddr: "1.1.1.1:4002", ServerReplyAddr: "10.0.0.1:10207"},
@@ -257,8 +431,11 @@ func TestSelectPunchPlanSingleProbeIPLowConfidenceTriggersPrediction(t *testing.
 	}, true)}
 	peer := P2PPeerInfo{Nat: NatObservation{ObservedBasePort: 5000, ObservedInterval: 2}}
 	plan := SelectPunchPlan(self, peer, DefaultTimeouts())
-	if !self.Nat.MappingConfidenceLow {
-		t.Fatal("single probe ip should be low confidence")
+	if self.Nat.MappingConfidenceLow {
+		t.Fatalf("single probe ip should now classify from multi-endpoint evidence: %#v", self.Nat)
+	}
+	if self.Nat.NATType != NATTypeSymmetric {
+		t.Fatalf("NATType = %q, want %q", self.Nat.NATType, NATTypeSymmetric)
 	}
 	if !plan.EnablePrediction || !plan.UseTargetSpray {
 		t.Fatalf("unexpected plan %#v", plan)
@@ -285,7 +462,7 @@ func TestSelectPunchPlanAllowsBirthdayFallbackForHardPeers(t *testing.T) {
 func TestSelectPunchPlanEnablesPredictionForClassifiedSymmetricPeer(t *testing.T) {
 	plan := SelectPunchPlan(
 		P2PPeerInfo{Nat: NatObservation{NATType: NATTypeSymmetric, MappingBehavior: NATMappingEndpointDependent}},
-		P2PPeerInfo{Nat: NatObservation{ObservedBasePort: 5000, NATType: NATTypeCone}},
+		P2PPeerInfo{Nat: NatObservation{ObservedBasePort: 5000, NATType: NATTypeRestrictedCone}},
 		DefaultTimeouts(),
 	)
 	if !plan.EnablePrediction || !plan.UseTargetSpray {
@@ -304,6 +481,110 @@ func TestSelectPunchPlanKeepsBirthdayFallbackDisabledForLoosePeers(t *testing.T)
 	}
 	if plan.UseBirthdayAttack {
 		t.Fatal("birthday attack must not be enabled directly by default")
+	}
+}
+
+func TestSelectPunchPlanTreatsUnknownFilteringAsConservative(t *testing.T) {
+	self := P2PPeerInfo{Nat: NatObservation{
+		ObservedBasePort:    5000,
+		ProbeEndpointCount:  3,
+		MappingBehavior:     NATMappingEndpointIndependent,
+		NATType:             NATTypeUnknown,
+		ClassificationLevel: ClassificationConfidenceLow,
+		Samples: []ProbeSample{
+			{ProbePort: 10206, ObservedAddr: "1.1.1.1:5000", ServerReplyAddr: "203.0.113.10:10206"},
+			{ProbePort: 10207, ObservedAddr: "1.1.1.1:5000", ServerReplyAddr: "203.0.113.10:10207"},
+			{ProbePort: 10208, ObservedAddr: "1.1.1.1:5000", ServerReplyAddr: "203.0.113.10:10208"},
+		},
+	}}
+	peer := P2PPeerInfo{Nat: NatObservation{
+		ObservedBasePort:    6000,
+		ProbeEndpointCount:  3,
+		MappingBehavior:     NATMappingEndpointIndependent,
+		NATType:             NATTypeUnknown,
+		ClassificationLevel: ClassificationConfidenceLow,
+		Samples: []ProbeSample{
+			{ProbePort: 10206, ObservedAddr: "2.2.2.2:6000", ServerReplyAddr: "203.0.113.20:10206"},
+			{ProbePort: 10207, ObservedAddr: "2.2.2.2:6000", ServerReplyAddr: "203.0.113.20:10207"},
+			{ProbePort: 10208, ObservedAddr: "2.2.2.2:6000", ServerReplyAddr: "203.0.113.20:10208"},
+		},
+	}}
+	plan := SelectPunchPlan(self, peer, DefaultTimeouts())
+	if !plan.EnablePrediction {
+		t.Fatalf("unknown filtering should keep prediction enabled, got %#v", plan)
+	}
+	if !plan.AllowBirthdayFallback {
+		t.Fatalf("unknown filtering on both peers should keep conservative fallback enabled, got %#v", plan)
+	}
+}
+
+func TestSelectPunchPlanTunesEasyPeersForLowerSprayBudget(t *testing.T) {
+	plan := SelectPunchPlan(
+		P2PPeerInfo{Nat: NatObservation{NATType: NATTypeRestrictedCone, MappingBehavior: NATMappingEndpointIndependent, FilteringBehavior: NATFilteringOpen, Samples: []ProbeSample{{ObservedAddr: "1.1.1.1:5000"}}}},
+		P2PPeerInfo{Nat: NatObservation{NATType: NATTypeRestrictedCone, MappingBehavior: NATMappingEndpointIndependent, FilteringBehavior: NATFilteringOpen, ObservedBasePort: 6000, Samples: []ProbeSample{{ObservedAddr: "2.2.2.2:6000"}}}},
+		DefaultTimeouts(),
+	)
+	if plan.EnablePrediction || plan.UseTargetSpray {
+		t.Fatalf("easy peers should stay on the light direct path, got %#v", plan)
+	}
+	if plan.SprayRounds != 1 || plan.SprayBurst != 4 {
+		t.Fatalf("easy peers should reduce spray budget, got %#v", plan)
+	}
+	if plan.SprayPerPacketSleep != 5*time.Millisecond {
+		t.Fatalf("easy peers should respect the paced spray floor, got %#v", plan)
+	}
+	if plan.NominationDelay != 80*time.Millisecond || plan.NominationRetryInterval != 180*time.Millisecond {
+		t.Fatalf("easy peers should use faster nomination timing, got %#v", plan)
+	}
+}
+
+func TestSelectPunchPlanKeepsPredictionForLowConfidenceNPSOnlyEvidence(t *testing.T) {
+	plan := SelectPunchPlan(
+		P2PPeerInfo{Nat: NatObservation{
+			PublicIP:            "1.1.1.1",
+			ObservedBasePort:    5000,
+			MappingBehavior:     NATMappingEndpointIndependent,
+			FilteringBehavior:   NATFilteringOpen,
+			NATType:             NATTypeRestrictedCone,
+			ClassificationLevel: ClassificationConfidenceLow,
+			Samples: []ProbeSample{
+				{Provider: ProbeProviderNPS, ProbePort: 10206, ObservedAddr: "1.1.1.1:5000", ServerReplyAddr: "203.0.113.10:10206"},
+				{Provider: ProbeProviderNPS, ProbePort: 10207, ObservedAddr: "1.1.1.1:5000", ServerReplyAddr: "203.0.113.10:10207"},
+			},
+		}},
+		P2PPeerInfo{Nat: NatObservation{
+			PublicIP:            "2.2.2.2",
+			ObservedBasePort:    6000,
+			MappingBehavior:     NATMappingEndpointIndependent,
+			FilteringBehavior:   NATFilteringOpen,
+			NATType:             NATTypeRestrictedCone,
+			ClassificationLevel: ClassificationConfidenceLow,
+			Samples: []ProbeSample{
+				{Provider: ProbeProviderNPS, ProbePort: 10206, ObservedAddr: "2.2.2.2:6000", ServerReplyAddr: "203.0.113.20:10206"},
+				{Provider: ProbeProviderNPS, ProbePort: 10207, ObservedAddr: "2.2.2.2:6000", ServerReplyAddr: "203.0.113.20:10207"},
+			},
+		}},
+		DefaultTimeouts(),
+	)
+	if !plan.EnablePrediction || !plan.UseTargetSpray {
+		t.Fatalf("low-confidence NPS-only evidence should keep conservative prediction enabled, got %#v", plan)
+	}
+}
+
+func TestSelectPunchPlanTunesHardPeersForHigherSprayBudget(t *testing.T) {
+	plan := SelectPunchPlan(
+		P2PPeerInfo{Nat: NatObservation{NATType: NATTypeSymmetric, ProbePortRestricted: true, MappingConfidenceLow: true}},
+		P2PPeerInfo{Nat: NatObservation{NATType: NATTypeSymmetric, ProbePortRestricted: true, MappingConfidenceLow: true, ObservedBasePort: 6000}},
+		DefaultTimeouts(),
+	)
+	if !plan.AllowBirthdayFallback || !plan.EnablePrediction {
+		t.Fatalf("hard peers should keep the hard path enabled, got %#v", plan)
+	}
+	if plan.SprayRounds != 3 || plan.SprayBurst != 10 {
+		t.Fatalf("hard peers should increase spray budget, got %#v", plan)
+	}
+	if plan.SprayPerPacketSleep != 5*time.Millisecond {
+		t.Fatalf("hard peers should keep the paced spray floor, got %#v", plan)
 	}
 }
 
@@ -415,6 +696,141 @@ func TestApplyProbePlanOptionsCanDisableForcedPrediction(t *testing.T) {
 	}
 	if plan.UseTargetSpray {
 		t.Fatal("target spray should be disabled when forced prediction is turned off and peer samples exist")
+	}
+}
+
+func TestApplySummaryHintsToPlanDualStackStrongEvidence(t *testing.T) {
+	plan := PunchPlan{
+		HandshakeTimeout:        2 * time.Second,
+		NominationDelay:         80 * time.Millisecond,
+		NominationRetryInterval: 300 * time.Millisecond,
+		SprayRounds:             2,
+		SprayBurst:              8,
+	}
+	summary := P2PProbeSummary{
+		Self: P2PPeerInfo{Nat: NatObservation{
+			NATType:             NATTypeRestrictedCone,
+			MappingBehavior:     NATMappingEndpointIndependent,
+			FilteringBehavior:   NATFilteringOpen,
+			FilteringTested:     true,
+			ClassificationLevel: ClassificationConfidenceHigh,
+			Samples: []ProbeSample{
+				{Provider: ProbeProviderNPS, ObservedAddr: "1.1.1.1:5000"},
+				{Provider: ProbeProviderSTUN, ObservedAddr: "1.1.1.1:5000"},
+			},
+		}},
+		Peer: P2PPeerInfo{Nat: NatObservation{
+			NATType:             NATTypeRestrictedCone,
+			MappingBehavior:     NATMappingEndpointIndependent,
+			FilteringBehavior:   NATFilteringOpen,
+			FilteringTested:     true,
+			ClassificationLevel: ClassificationConfidenceHigh,
+			Samples: []ProbeSample{
+				{Provider: ProbeProviderNPS, ObservedAddr: "2.2.2.2:6000"},
+				{Provider: ProbeProviderSTUN, ObservedAddr: "2.2.2.2:6000"},
+			},
+		}},
+		Hints: map[string]any{
+			"shared_family_count": 2,
+		},
+	}
+	tuned := ApplySummaryHintsToPlan(plan, summary)
+	if tuned.SprayRounds != 1 || tuned.SprayBurst != 5 {
+		t.Fatalf("ApplySummaryHintsToPlan() spray budget = (%d,%d), want (1,5)", tuned.SprayRounds, tuned.SprayBurst)
+	}
+	if tuned.NominationDelay != 100*time.Millisecond {
+		t.Fatalf("ApplySummaryHintsToPlan() nomination delay = %s, want 100ms", tuned.NominationDelay)
+	}
+	if tuned.NominationRetryInterval != 220*time.Millisecond {
+		t.Fatalf("ApplySummaryHintsToPlan() nomination retry = %s, want 220ms", tuned.NominationRetryInterval)
+	}
+}
+
+func TestApplySummaryHintsToPlanUsesAdaptiveProfileHistory(t *testing.T) {
+	resetAdaptiveProfileHistoryForTest()
+	t.Cleanup(resetAdaptiveProfileHistoryForTest)
+
+	summary := P2PProbeSummary{
+		Self: P2PPeerInfo{Nat: NatObservation{
+			NATType:             NATTypeRestrictedCone,
+			MappingBehavior:     NATMappingEndpointIndependent,
+			FilteringBehavior:   NATFilteringOpen,
+			FilteringTested:     true,
+			ClassificationLevel: ClassificationConfidenceMed,
+			Samples: []ProbeSample{
+				{Provider: ProbeProviderNPS, ObservedAddr: "1.1.1.1:5000"},
+			},
+		}},
+		Peer: P2PPeerInfo{Nat: NatObservation{
+			NATType:             NATTypeRestrictedCone,
+			MappingBehavior:     NATMappingEndpointIndependent,
+			FilteringBehavior:   NATFilteringOpen,
+			FilteringTested:     true,
+			ClassificationLevel: ClassificationConfidenceMed,
+			ObservedBasePort:    6000,
+			Samples: []ProbeSample{
+				{Provider: ProbeProviderNPS, ObservedAddr: "2.2.2.2:6000"},
+			},
+		}},
+	}
+	recordAdaptiveProfileSuccess(summary, common.CONN_KCP)
+	recordAdaptiveProfileSuccess(summary, common.CONN_KCP)
+
+	plan := PunchPlan{
+		HandshakeTimeout:        2 * time.Second,
+		NominationDelay:         120 * time.Millisecond,
+		NominationRetryInterval: 300 * time.Millisecond,
+		SprayRounds:             2,
+		SprayBurst:              8,
+	}
+	tuned := ApplySummaryHintsToPlan(plan, summary)
+	if tuned.SprayRounds != 1 || tuned.SprayBurst != 7 {
+		t.Fatalf("adaptive history should lighten plan, got rounds=%d burst=%d", tuned.SprayRounds, tuned.SprayBurst)
+	}
+	if tuned.NominationDelay != 105*time.Millisecond || tuned.NominationRetryInterval != 200*time.Millisecond {
+		t.Fatalf("adaptive history should tighten nomination timing, got delay=%s retry=%s", tuned.NominationDelay, tuned.NominationRetryInterval)
+	}
+}
+
+func TestAdaptiveProfileTimeoutReducesScore(t *testing.T) {
+	resetAdaptiveProfileHistoryForTest()
+	t.Cleanup(resetAdaptiveProfileHistoryForTest)
+
+	summary := P2PProbeSummary{
+		Self: P2PPeerInfo{Families: []P2PFamilyInfo{{Family: "udp4", Nat: NatObservation{NATType: NATTypeRestrictedCone, MappingBehavior: NATMappingEndpointIndependent, FilteringBehavior: NATFilteringOpen, FilteringTested: true, ClassificationLevel: ClassificationConfidenceMed}}}},
+		Peer: P2PPeerInfo{Families: []P2PFamilyInfo{{Family: "udp4", Nat: NatObservation{NATType: NATTypeRestrictedCone, MappingBehavior: NATMappingEndpointIndependent, FilteringBehavior: NATFilteringOpen, FilteringTested: true, ClassificationLevel: ClassificationConfidenceMed}}}},
+	}
+	recordAdaptiveProfileSuccess(summary, common.CONN_KCP)
+	before := adaptiveProfileScore(summary)
+	recordAdaptiveProfileTimeout(summary)
+	after := adaptiveProfileScore(summary)
+	if after >= before {
+		t.Fatalf("adaptiveProfileScore() should drop after timeout, before=%d after=%d", before, after)
+	}
+}
+
+func TestSortRuntimeFamilyWorkersPrefersAdaptiveProfileScore(t *testing.T) {
+	resetAdaptiveProfileHistoryForTest()
+	t.Cleanup(resetAdaptiveProfileHistoryForTest)
+
+	summary4 := P2PProbeSummary{
+		Self: P2PPeerInfo{Families: []P2PFamilyInfo{{Family: "udp4", Nat: NatObservation{NATType: NATTypeRestrictedCone, MappingBehavior: NATMappingEndpointIndependent, FilteringBehavior: NATFilteringOpen, FilteringTested: true, ClassificationLevel: ClassificationConfidenceMed}}}},
+		Peer: P2PPeerInfo{Families: []P2PFamilyInfo{{Family: "udp4", Nat: NatObservation{NATType: NATTypeRestrictedCone, MappingBehavior: NATMappingEndpointIndependent, FilteringBehavior: NATFilteringOpen, FilteringTested: true, ClassificationLevel: ClassificationConfidenceMed, ObservedBasePort: 6000}}}},
+	}
+	summary6 := P2PProbeSummary{
+		Self: P2PPeerInfo{Families: []P2PFamilyInfo{{Family: "udp6", Nat: NatObservation{NATType: NATTypeRestrictedCone, MappingBehavior: NATMappingEndpointIndependent, FilteringBehavior: NATFilteringOpen, FilteringTested: true, ClassificationLevel: ClassificationConfidenceMed}}}},
+		Peer: P2PPeerInfo{Families: []P2PFamilyInfo{{Family: "udp6", Nat: NatObservation{NATType: NATTypeRestrictedCone, MappingBehavior: NATMappingEndpointIndependent, FilteringBehavior: NATFilteringOpen, FilteringTested: true, ClassificationLevel: ClassificationConfidenceMed, ObservedBasePort: 7000}}}},
+	}
+	recordAdaptiveProfileSuccess(summary6, common.CONN_KCP)
+	recordAdaptiveProfileSuccess(summary6, common.CONN_KCP)
+
+	workers := []*runtimeFamilyWorker{
+		{family: udpFamilyV4, rs: &runtimeSession{}, summary: summary4},
+		{family: udpFamilyV6, rs: &runtimeSession{}, summary: summary6},
+	}
+	sortRuntimeFamilyWorkers(workers)
+	if workers[0].family != udpFamilyV6 {
+		t.Fatalf("sortRuntimeFamilyWorkers() should prefer adaptive success family, got first=%s", workers[0].family.String())
 	}
 }
 
@@ -569,6 +985,32 @@ func TestBuildPreferredDirectPunchTargetsPrefersMatchingPeerLocalAddr(t *testing
 	}
 }
 
+func TestBuildPreferredDirectPunchTargetsDoesNotPrioritizeForeignPrivateSubnet(t *testing.T) {
+	self := P2PPeerInfo{
+		LocalAddrs: []string{
+			"10.0.0.10:4000",
+		},
+	}
+	peer := P2PPeerInfo{
+		Nat: NatObservation{
+			PortMapping: &PortMappingInfo{ExternalAddr: "2.2.2.2:6000"},
+			Samples: []ProbeSample{
+				{ObservedAddr: "1.1.1.1:5000"},
+			},
+		},
+		LocalAddrs: []string{
+			"192.168.0.20:5000",
+		},
+	}
+	targets := BuildPreferredDirectPunchTargets(self, peer)
+	if len(targets) < 2 {
+		t.Fatalf("expected preferred direct targets, got %#v", targets)
+	}
+	if targets[0] != "2.2.2.2:6000" {
+		t.Fatalf("foreign private subnet should not outrank public candidates, got %#v", targets)
+	}
+}
+
 func TestBuildPreferredPunchTargetsKeepsDirectCandidatesBeforePrediction(t *testing.T) {
 	self := P2PPeerInfo{
 		LocalAddrs: []string{"192.168.0.10:4000"},
@@ -596,6 +1038,36 @@ func TestBuildPreferredPunchTargetsKeepsDirectCandidatesBeforePrediction(t *test
 	}
 	if targets[1] != "1.1.1.1:5000" {
 		t.Fatalf("second target = %q, want observed addr second (%#v)", targets[1], targets)
+	}
+}
+
+func TestBuildPreferredPunchTargetsDefersForeignPrivateLocalFallback(t *testing.T) {
+	self := P2PPeerInfo{
+		LocalAddrs: []string{"10.0.0.10:4000"},
+	}
+	peer := P2PPeerInfo{
+		Nat: NatObservation{
+			PublicIP:         "1.1.1.1",
+			ObservedBasePort: 5000,
+			ObservedInterval: 2,
+			Samples: []ProbeSample{
+				{ObservedAddr: "1.1.1.1:5000"},
+			},
+		},
+		LocalAddrs: []string{"192.168.0.20:5000"},
+	}
+	targets := BuildPreferredPunchTargets(self, peer, PunchPlan{
+		PredictionIntervals: []int{2},
+		SpraySpan:           4,
+	})
+	if len(targets) < 3 {
+		t.Fatalf("expected enough targets, got %#v", targets)
+	}
+	if targets[0] != "1.1.1.1:5000" {
+		t.Fatalf("first target = %q, want observed public target first (%#v)", targets[0], targets)
+	}
+	if targets[len(targets)-1] != "192.168.0.20:5000" {
+		t.Fatalf("foreign private local addr should be deferred to the end, got %#v", targets)
 	}
 }
 
@@ -637,6 +1109,178 @@ func TestBuildPreferredPunchTargetsUsesPredictionHistoryBeforeDefaultSpray(t *te
 	}
 }
 
+func TestCandidateRankerKeepsForeignPrivateFallbackBelowPublicFallback(t *testing.T) {
+	ranker := NewCandidateRanker(
+		P2PPeerInfo{LocalAddrs: []string{"192.168.1.10:4000"}},
+		P2PPeerInfo{Nat: NatObservation{PublicIP: "203.0.113.10", ObservedBasePort: 5000}},
+		PunchPlan{},
+	)
+	publicFallback := ranker.Priority("", "203.0.113.10:5002")
+	foreignPrivate := ranker.Priority("", "10.0.0.5:6000")
+	sameSubnetPrivate := ranker.Priority("", "192.168.1.20:6000")
+	if foreignPrivate.Score >= publicFallback.Score {
+		t.Fatalf("foreign private fallback should stay below public fallback: private=%#v public=%#v", foreignPrivate, publicFallback)
+	}
+	if sameSubnetPrivate.Score <= foreignPrivate.Score {
+		t.Fatalf("same-subnet private fallback should outrank foreign private fallback: same=%#v foreign=%#v", sameSubnetPrivate, foreignPrivate)
+	}
+}
+
+func TestCandidateRankerReusesPreferredTargetPlans(t *testing.T) {
+	self := P2PPeerInfo{
+		LocalAddrs: []string{"192.168.0.10:4000"},
+	}
+	peer := P2PPeerInfo{
+		Nat: NatObservation{
+			PublicIP:         "1.1.1.1",
+			ObservedBasePort: 5000,
+			ObservedInterval: 2,
+			Samples: []ProbeSample{
+				{ObservedAddr: "1.1.1.1:5000"},
+			},
+		},
+		LocalAddrs: []string{"192.168.0.20:5000"},
+	}
+	plan := PunchPlan{
+		UseTargetSpray:         true,
+		AllowBirthdayFallback:  true,
+		PredictionIntervals:    []int{2},
+		SpraySpan:              6,
+		BirthdayTargetsPerPort: 4,
+	}
+	ranker := NewCandidateRanker(self, peer, plan)
+	if !reflect.DeepEqual(ranker.DirectTargets(), BuildPreferredDirectPunchTargets(self, peer)) {
+		t.Fatalf("direct targets diverged: got %#v want %#v", ranker.DirectTargets(), BuildPreferredDirectPunchTargets(self, peer))
+	}
+	if !reflect.DeepEqual(ranker.PrimaryTargets(true), BuildPreferredPunchTargets(self, peer, plan)) {
+		t.Fatalf("primary targets diverged: got %#v want %#v", ranker.PrimaryTargets(true), BuildPreferredPunchTargets(self, peer, plan))
+	}
+	if !reflect.DeepEqual(ranker.BirthdayTargets(), BuildBirthdayPunchTargets(peer, plan)) {
+		t.Fatalf("birthday targets diverged: got %#v want %#v", ranker.BirthdayTargets(), BuildBirthdayPunchTargets(peer, plan))
+	}
+}
+
+func TestCandidateRankerTargetOnlyTargetsExcludeDirectSet(t *testing.T) {
+	self := P2PPeerInfo{LocalAddrs: []string{"192.168.0.10:4000"}}
+	peer := P2PPeerInfo{
+		Nat: NatObservation{
+			PublicIP:         "1.1.1.1",
+			ObservedBasePort: 5000,
+			Samples:          []ProbeSample{{ObservedAddr: "1.1.1.1:5000"}},
+		},
+	}
+	ranker := NewCandidateRanker(self, peer, PunchPlan{
+		UseTargetSpray:      true,
+		PredictionIntervals: []int{2},
+		SpraySpan:           6,
+	})
+	direct := ranker.DirectTargets()
+	targetOnly := ranker.TargetOnlyTargets()
+	for _, directAddr := range direct {
+		for _, targetAddr := range targetOnly {
+			if directAddr == targetAddr {
+				t.Fatalf("target-only targets should exclude direct target %q", directAddr)
+			}
+		}
+	}
+	if len(targetOnly) == 0 {
+		t.Fatal("target-only targets should preserve prediction addresses")
+	}
+}
+
+func TestCandidateRankerTargetStagesPreferLikelyNextOnSequentialMappings(t *testing.T) {
+	self := P2PPeerInfo{LocalAddrs: []string{"192.168.0.10:4000"}}
+	peer := P2PPeerInfo{
+		Nat: NatObservation{
+			PublicIP:         "1.1.1.1",
+			ObservedBasePort: 5000,
+			ObservedInterval: 2,
+			MappingBehavior:  NATMappingEndpointDependent,
+			Samples: []ProbeSample{
+				{ObservedAddr: "1.1.1.1:5000"},
+				{ObservedAddr: "1.1.1.1:5002"},
+				{ObservedAddr: "1.1.1.1:5004"},
+			},
+		},
+	}
+	ranker := NewCandidateRanker(self, peer, PunchPlan{
+		UseTargetSpray:      true,
+		PredictionIntervals: []int{2},
+		SpraySpan:           6,
+	})
+	stages := ranker.TargetStages()
+	if len(stages) == 0 {
+		t.Fatal("target stages should be available")
+	}
+	if stages[0].Name != "target_likely_next" {
+		t.Fatalf("first target stage = %q, want target_likely_next", stages[0].Name)
+	}
+	if len(stages[0].Targets) == 0 || stages[0].Targets[0] != "1.1.1.1:5006" {
+		t.Fatalf("likely-next stage should lead with the next sequential port, got %#v", stages[0].Targets)
+	}
+}
+
+func TestCandidateRankerResponsivePriorityPromotesAuthenticatedPublicCandidate(t *testing.T) {
+	self := P2PPeerInfo{
+		LocalAddrs: []string{"192.168.0.10:4000"},
+	}
+	peer := P2PPeerInfo{
+		Nat: NatObservation{
+			PublicIP:         "1.1.1.1",
+			ObservedBasePort: 5000,
+			Samples: []ProbeSample{
+				{ObservedAddr: "1.1.1.1:5000"},
+			},
+		},
+	}
+	ranker := NewCandidateRanker(self, peer, PunchPlan{UseTargetSpray: true})
+	staticPriority := ranker.Priority("", "1.1.1.1:5012")
+	responsivePriority := ranker.ResponsivePriority("1.1.1.1:5012")
+	if responsivePriority.Score <= staticPriority.Score {
+		t.Fatalf("responsive candidate should outrank static fallback: responsive=%#v static=%#v", responsivePriority, staticPriority)
+	}
+	if responsivePriority.Reason != "responsive_public(delta=12)" {
+		t.Fatalf("responsive reason = %q, want responsive_public(delta=12)", responsivePriority.Reason)
+	}
+}
+
+func TestCandidateRankerResponsivePriorityPrefersSameSubnetLocalCandidate(t *testing.T) {
+	self := P2PPeerInfo{
+		LocalAddrs: []string{"192.168.0.10:4000"},
+	}
+	peer := P2PPeerInfo{
+		Nat: NatObservation{
+			PublicIP:         "1.1.1.1",
+			ObservedBasePort: 5000,
+		},
+	}
+	ranker := NewCandidateRanker(self, peer, PunchPlan{})
+	sameSubnet := ranker.ResponsivePriority("192.168.0.20:5000")
+	public := ranker.ResponsivePriority("1.1.1.1:5000")
+	if sameSubnet.Score <= public.Score {
+		t.Fatalf("same subnet responsive candidate should outrank public responsive candidate: same=%#v public=%#v", sameSubnet, public)
+	}
+}
+
+func TestSessionPacerDeterministicAndBounded(t *testing.T) {
+	start := NormalizeP2PPunchStart(P2PPunchStart{
+		SessionID: "session-1",
+		Token:     "token-1",
+		Wire:      P2PWireSpec{RouteID: "route-1"},
+	})
+	left := newSessionPacer(start)
+	right := newSessionPacer(start)
+	if got, want := left.sprayPacketGap(1, 2, 2*time.Millisecond), right.sprayPacketGap(1, 2, 2*time.Millisecond); got != want {
+		t.Fatalf("sprayPacketGap mismatch: got %s want %s", got, want)
+	}
+	if gap := left.sprayPacketGap(0, 0, 2*time.Millisecond); gap < minPunchBindingGap {
+		t.Fatalf("sprayPacketGap = %s, want >= %s", gap, minPunchBindingGap)
+	}
+	if got, want := left.periodicRetryDelay(2), right.periodicRetryDelay(2); got != want {
+		t.Fatalf("periodicRetryDelay mismatch: got %s want %s", got, want)
+	}
+}
+
 func TestBuildBirthdayPunchTargets(t *testing.T) {
 	peer := P2PPeerInfo{
 		Nat: NatObservation{
@@ -673,27 +1317,49 @@ func TestUDPPacketTokenValidation(t *testing.T) {
 	if decoded.SessionID != "session-1" || decoded.Token != "token-1" {
 		t.Fatalf("decoded packet mismatch: %#v", decoded)
 	}
-	var tampered map[string]any
-	if err := json.Unmarshal(raw, &tampered); err != nil {
-		t.Fatalf("json.Unmarshal() error = %v", err)
-	}
-	tampered["timestamp"] = float64(decoded.Timestamp + 1)
-	tamperedRaw, err := json.Marshal(tampered)
-	if err != nil {
-		t.Fatalf("json.Marshal() error = %v", err)
-	}
+	tamperedRaw := append([]byte(nil), raw...)
+	tamperedRaw[2] ^= 0x01
 	if _, err := DecodeUDPPacket(tamperedRaw, "token-1"); !errors.Is(err, ErrP2PTokenMismatch) {
 		t.Fatalf("expected ErrP2PTokenMismatch, got %v", err)
 	}
 	if _, err := DecodeUDPPacket(raw, "wrong-token"); !errors.Is(err, ErrP2PTokenMismatch) {
 		t.Fatalf("expected ErrP2PTokenMismatch for wrong token, got %v", err)
 	}
-	var envelope map[string]any
-	if err := json.Unmarshal(raw, &envelope); err != nil {
-		t.Fatalf("json.Unmarshal(raw) error = %v", err)
+	for _, plain := range [][]byte{
+		[]byte("session-1"),
+		[]byte("token-1"),
+		[]byte(packetTypeProbe),
+	} {
+		if bytes.Contains(raw, plain) {
+			t.Fatalf("wire packet should not expose plaintext %q", string(plain))
+		}
 	}
-	if _, ok := envelope["token"]; ok {
-		t.Fatalf("wire packet should not expose token: %#v", envelope)
+}
+
+func TestUDPPacketEncodingAddsRandomLengthVariation(t *testing.T) {
+	lengths := make(map[int]struct{}, 4)
+	bodies := make(map[string]struct{}, 4)
+	for i := 0; i < 8; i++ {
+		packet := newUDPPacket("session-1", "token-1", common.WORK_P2P_VISITOR, packetTypeProbe)
+		raw, err := EncodeUDPPacket(packet)
+		if err != nil {
+			t.Fatalf("EncodeUDPPacket() error = %v", err)
+		}
+		lengths[len(raw)] = struct{}{}
+		bodies[string(raw)] = struct{}{}
+		decoded, err := DecodeUDPPacket(raw, "token-1")
+		if err != nil {
+			t.Fatalf("DecodeUDPPacket() error = %v", err)
+		}
+		if decoded.SessionID != "session-1" || decoded.Type != packetTypeProbe {
+			t.Fatalf("decoded packet mismatch: %#v", decoded)
+		}
+	}
+	if len(bodies) < 2 {
+		t.Fatal("encoded packets should differ because nonce/padding are randomized")
+	}
+	if len(lengths) < 2 {
+		t.Fatalf("encoded packets should vary in length, got %v", lengths)
 	}
 }
 
@@ -893,13 +1559,77 @@ func TestRunSTUNProbeEndpointTimesOutQuickly(t *testing.T) {
 	}
 }
 
-func TestRunProbeRequiresNPSEndpoint(t *testing.T) {
+func TestResolveUDPAddrContextPrefersLocalSocketFamily(t *testing.T) {
 	localConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("ListenPacket(local) error = %v", err)
 	}
 	defer func() { _ = localConn.Close() }()
-	_, err = runProbe(context.Background(), localConn, P2PPunchStart{
+
+	lookup, err := net.DefaultResolver.LookupIPAddr(context.Background(), "localhost")
+	if err != nil {
+		t.Fatalf("LookupIPAddr(localhost) error = %v", err)
+	}
+	hasV4 := false
+	for _, addr := range lookup {
+		if ip := common.NormalizeIP(addr.IP); ip != nil && ip.To4() != nil {
+			hasV4 = true
+			break
+		}
+	}
+	if !hasV4 {
+		t.Skip("localhost does not resolve to IPv4 on this host")
+	}
+
+	resolved, err := resolveUDPAddrContext(context.Background(), localConn.LocalAddr(), "localhost:3478", 250*time.Millisecond)
+	if err != nil {
+		t.Fatalf("resolveUDPAddrContext() error = %v", err)
+	}
+	if resolved.IP == nil || resolved.IP.To4() == nil {
+		t.Fatalf("resolveUDPAddrContext() = %v, want IPv4 address", resolved)
+	}
+}
+
+func TestResolveUDPAddrContextRejectsMismatchedLiteralFamily(t *testing.T) {
+	localConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(local) error = %v", err)
+	}
+	defer func() { _ = localConn.Close() }()
+
+	if _, err := resolveUDPAddrContext(context.Background(), localConn.LocalAddr(), "[::1]:3478", 250*time.Millisecond); err == nil {
+		t.Fatal("expected mismatched literal family to be rejected")
+	}
+}
+
+func TestRunProbeAllowsSTUNOnlyCompatibility(t *testing.T) {
+	serverConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(server) error = %v", err)
+	}
+	defer func() { _ = serverConn.Close() }()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		buf := make([]byte, 1500)
+		n, addr, err := serverConn.ReadFrom(buf)
+		if err != nil {
+			return
+		}
+		raw, err := buildFakeSTUNBindingResponse(buf[:n], addr.(*net.UDPAddr))
+		if err != nil {
+			t.Errorf("buildFakeSTUNBindingResponse() error = %v", err)
+			return
+		}
+		_, _ = serverConn.WriteTo(raw, addr)
+	}()
+
+	localConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(local) error = %v", err)
+	}
+	defer func() { _ = localConn.Close() }()
+	obs, err := runProbe(context.Background(), localConn, P2PPunchStart{
 		SessionID: "session-1",
 		Token:     "token-1",
 		Role:      common.WORK_P2P_VISITOR,
@@ -909,13 +1639,16 @@ func TestRunProbeRequiresNPSEndpoint(t *testing.T) {
 			Mode:     ProbeModeBinding,
 			Network:  ProbeNetworkUDP,
 			Endpoints: []P2PProbeEndpoint{
-				{ID: "stun-1", Provider: ProbeProviderSTUN, Mode: ProbeModeBinding, Network: ProbeNetworkUDP, Address: "127.0.0.1:3478"},
+				{ID: "stun-1", Provider: ProbeProviderSTUN, Mode: ProbeModeBinding, Network: ProbeNetworkUDP, Address: serverConn.LocalAddr().String()},
 			},
 		},
 		Timeouts: DefaultTimeouts(),
 	})
-	if err == nil || !strings.Contains(err.Error(), "missing required nps probe endpoints") {
-		t.Fatalf("expected missing nps probe endpoint error, got %v", err)
+	if err != nil {
+		t.Fatalf("runProbe() error = %v", err)
+	}
+	if obs.PublicIP == "" {
+		t.Fatalf("stun-only probe should still observe a public address, got %#v", obs)
 	}
 }
 
@@ -942,18 +1675,255 @@ func TestCompatibleNPSProbeEndpointsFiltersBySocketFamily(t *testing.T) {
 	}
 }
 
-func TestPeriodicSprayDelayBackoffAndCap(t *testing.T) {
-	if delay := periodicSprayDelay(0); delay != 1500*time.Millisecond {
+func TestChooseLocalProbeAddrPrefersFamilyWithMoreNPSEndpoints(t *testing.T) {
+	if _, err := common.GetLocalUdp4Addr(); err != nil {
+		t.Skip("local IPv4 UDP addr unavailable")
+	}
+	addr, err := ChooseLocalProbeAddr(P2PProbeConfig{
+		Provider: ProbeProviderNPS,
+		Mode:     ProbeModeUDP,
+		Network:  ProbeNetworkUDP,
+		Endpoints: []P2PProbeEndpoint{
+			{ID: "v6-1", Provider: ProbeProviderNPS, Mode: ProbeModeUDP, Network: ProbeNetworkUDP, Address: "[::1]:10206"},
+			{ID: "v4-1", Provider: ProbeProviderNPS, Mode: ProbeModeUDP, Network: ProbeNetworkUDP, Address: "127.0.0.1:10207"},
+			{ID: "v4-2", Provider: ProbeProviderNPS, Mode: ProbeModeUDP, Network: ProbeNetworkUDP, Address: "127.0.0.1:10208"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ChooseLocalProbeAddr() error = %v", err)
+	}
+	if family := detectAddressFamily(addr); family != udpFamilyV4 {
+		t.Fatalf("ChooseLocalProbeAddr() = %q, want IPv4 family", addr)
+	}
+}
+
+func TestChooseLocalProbeAddrsIncludesDualStackWhenBothFamiliesUsable(t *testing.T) {
+	if _, err := common.GetLocalUdp4Addr(); err != nil {
+		t.Skip("local IPv4 UDP addr unavailable")
+	}
+	if _, err := common.GetLocalUdp6Addr(); err != nil {
+		t.Skip("local IPv6 UDP addr unavailable")
+	}
+	addrs, err := ChooseLocalProbeAddrs("", P2PProbeConfig{
+		Provider: ProbeProviderNPS,
+		Mode:     ProbeModeUDP,
+		Network:  ProbeNetworkUDP,
+		Endpoints: []P2PProbeEndpoint{
+			{ID: "v4-1", Provider: ProbeProviderNPS, Mode: ProbeModeUDP, Network: ProbeNetworkUDP, Address: "127.0.0.1:10207"},
+			{ID: "v6-1", Provider: ProbeProviderNPS, Mode: ProbeModeUDP, Network: ProbeNetworkUDP, Address: "[::1]:10208"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ChooseLocalProbeAddrs() error = %v", err)
+	}
+	if len(addrs) < 2 {
+		t.Fatalf("dual-stack probe selection should keep both families, got %#v", addrs)
+	}
+	if detectAddressFamily(addrs[0]) == detectAddressFamily(addrs[1]) {
+		t.Fatalf("expected both IPv4 and IPv6 probe addrs, got %#v", addrs)
+	}
+}
+
+func TestChooseLocalProbeAddrsPrefersExplicitBindIP(t *testing.T) {
+	addrs, err := ChooseLocalProbeAddrs("127.0.0.1", P2PProbeConfig{
+		Provider: ProbeProviderNPS,
+		Mode:     ProbeModeUDP,
+		Network:  ProbeNetworkUDP,
+		Endpoints: []P2PProbeEndpoint{
+			{ID: "v4-1", Provider: ProbeProviderNPS, Mode: ProbeModeUDP, Network: ProbeNetworkUDP, Address: "127.0.0.1:10207"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ChooseLocalProbeAddrs() error = %v", err)
+	}
+	if len(addrs) == 0 || addrs[0] != "127.0.0.1:0" {
+		t.Fatalf("ChooseLocalProbeAddrs() = %#v, want explicit bind addr first", addrs)
+	}
+	if len(addrs) != 1 {
+		t.Fatalf("ChooseLocalProbeAddrs() should keep a single candidate for the same family, got %#v", addrs)
+	}
+}
+
+func TestChooseLocalProbeAddrsDoesNotForceUnsupportedPreferredFamily(t *testing.T) {
+	addrs, err := ChooseLocalProbeAddrs("2001:db8::10", P2PProbeConfig{
+		Provider: ProbeProviderNPS,
+		Mode:     ProbeModeUDP,
+		Network:  ProbeNetworkUDP,
+		Endpoints: []P2PProbeEndpoint{
+			{ID: "v4-1", Provider: ProbeProviderNPS, Mode: ProbeModeUDP, Network: ProbeNetworkUDP, Address: "127.0.0.1:10207"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ChooseLocalProbeAddrs() error = %v", err)
+	}
+	if len(addrs) == 0 {
+		t.Fatal("ChooseLocalProbeAddrs() should keep a usable fallback family")
+	}
+	if detectAddressFamily(addrs[0]) != udpFamilyV4 {
+		t.Fatalf("ChooseLocalProbeAddrs() should not force unsupported preferred family, got %#v", addrs)
+	}
+}
+
+func TestChooseLocalProbeAddrsUsesPreferredOnlyWithinMatchingFamily(t *testing.T) {
+	if _, err := common.GetLocalUdp6Addr(); err != nil {
+		t.Skip("local IPv6 UDP addr unavailable")
+	}
+	addrs, err := ChooseLocalProbeAddrs("127.0.0.1", P2PProbeConfig{
+		Provider: ProbeProviderNPS,
+		Mode:     ProbeModeUDP,
+		Network:  ProbeNetworkUDP,
+		Endpoints: []P2PProbeEndpoint{
+			{ID: "v4-1", Provider: ProbeProviderNPS, Mode: ProbeModeUDP, Network: ProbeNetworkUDP, Address: "127.0.0.1:10207"},
+			{ID: "v6-1", Provider: ProbeProviderNPS, Mode: ProbeModeUDP, Network: ProbeNetworkUDP, Address: "[::1]:10208"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("ChooseLocalProbeAddrs() error = %v", err)
+	}
+	if len(addrs) != 2 {
+		t.Fatalf("ChooseLocalProbeAddrs() should keep one candidate per family, got %#v", addrs)
+	}
+	var v4Count, v6Count int
+	for _, addr := range addrs {
+		switch family := detectAddressFamily(addr); family {
+		case udpFamilyV4:
+			v4Count++
+			if addr != "127.0.0.1:0" {
+				t.Fatalf("expected explicit IPv4 bind addr, got %#v", addrs)
+			}
+		case udpFamilyV6:
+			v6Count++
+		case udpFamilyAny:
+			t.Fatalf("expected concrete UDP family for %q", addr)
+		default:
+			t.Fatalf("unexpected UDP family %q for %q", family.String(), addr)
+		}
+	}
+	if v4Count != 1 || v6Count != 1 {
+		t.Fatalf("ChooseLocalProbeAddrs() should keep exactly one candidate per family, got %#v", addrs)
+	}
+}
+
+func TestPeerInfoForFamilyReturnsSplitFamilyView(t *testing.T) {
+	peer := BuildPeerInfo(common.WORK_P2P_VISITOR, common.CONN_KCP, "", []P2PFamilyInfo{
+		{
+			Family:     "udp4",
+			Nat:        NatObservation{PublicIP: "1.1.1.1", ObservedBasePort: 5000, Samples: []ProbeSample{{ObservedAddr: "1.1.1.1:5000"}}},
+			LocalAddrs: []string{"192.168.0.10:4000"},
+		},
+		{
+			Family:     "udp6",
+			Nat:        NatObservation{PublicIP: "2001:db8::1", ObservedBasePort: 6000, Samples: []ProbeSample{{ObservedAddr: "[2001:db8::1]:6000"}}},
+			LocalAddrs: []string{"[fd00::10]:4000"},
+		},
+	})
+	v6, ok := PeerInfoForFamily(peer, udpFamilyV6)
+	if !ok {
+		t.Fatal("PeerInfoForFamily(udp6) should succeed")
+	}
+	if v6.Nat.PublicIP != "2001:db8::1" || len(v6.Families) != 1 || v6.Families[0].Family != "udp6" {
+		t.Fatalf("unexpected udp6 peer info %#v", v6)
+	}
+}
+
+func TestBuildPeerInfoUsesConservativePrimaryFamilyAndMergedLocalAddrs(t *testing.T) {
+	peer := BuildPeerInfo(common.WORK_P2P_VISITOR, common.CONN_KCP, "", []P2PFamilyInfo{
+		{
+			Family: "udp4",
+			Nat: NatObservation{
+				PublicIP:            "1.1.1.1",
+				ObservedBasePort:    5000,
+				NATType:             NATTypeRestrictedCone,
+				ClassificationLevel: ClassificationConfidenceMed,
+			},
+			LocalAddrs: []string{"192.168.0.10:4000"},
+		},
+		{
+			Family: "udp6",
+			Nat: NatObservation{
+				PublicIP:             "2001:db8::1",
+				ObservedBasePort:     6000,
+				NATType:              NATTypeSymmetric,
+				MappingConfidenceLow: true,
+				ClassificationLevel:  ClassificationConfidenceLow,
+			},
+			LocalAddrs: []string{"[fd00::10]:4000"},
+		},
+	})
+	if peer.Nat.NATType != NATTypeSymmetric {
+		t.Fatalf("top-level peer nat should keep the conservative family view, got %#v", peer.Nat)
+	}
+	if len(peer.LocalAddrs) != 2 {
+		t.Fatalf("top-level peer local addrs should merge all families, got %#v", peer.LocalAddrs)
+	}
+}
+
+func TestFilterPunchTargetsForLocalAddrKeepsRuntimeFamilyOnly(t *testing.T) {
+	localConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(local) error = %v", err)
+	}
+	defer func() { _ = localConn.Close() }()
+
+	filtered := filterPunchTargetsForLocalAddr(localConn.LocalAddr(), []string{
+		"127.0.0.1:4000",
+		"[::1]:4000",
+		"127.0.0.1:4000",
+		"192.168.1.10:4000",
+	})
+	if len(filtered) != 2 {
+		t.Fatalf("len(filtered) = %d, want 2 (%#v)", len(filtered), filtered)
+	}
+	if filtered[0] != "127.0.0.1:4000" || filtered[1] != "192.168.1.10:4000" {
+		t.Fatalf("unexpected filtered targets %#v", filtered)
+	}
+}
+
+func TestBasePeriodicSprayDelayBackoffAndCap(t *testing.T) {
+	if delay := basePeriodicSprayDelay(0); delay != 1500*time.Millisecond {
 		t.Fatalf("attempt 0 delay = %s, want 1500ms", delay)
 	}
-	if delay := periodicSprayDelay(1); delay != 2100*time.Millisecond {
+	if delay := basePeriodicSprayDelay(1); delay != 2100*time.Millisecond {
 		t.Fatalf("attempt 1 delay = %s, want 2100ms", delay)
 	}
-	if delay := periodicSprayDelay(2); delay != 2400*time.Millisecond {
+	if delay := basePeriodicSprayDelay(2); delay != 2400*time.Millisecond {
 		t.Fatalf("attempt 2 delay = %s, want 2400ms", delay)
 	}
-	if delay := periodicSprayDelay(6); delay != 4*time.Second {
+	if delay := basePeriodicSprayDelay(6); delay != 4*time.Second {
 		t.Fatalf("attempt 6 delay = %s, want capped 4s", delay)
+	}
+}
+
+func TestSleepContextReturnsEarlyOnCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	started := time.Now()
+	if sleepContext(ctx, 5*time.Second) {
+		t.Fatal("sleepContext should stop when context is canceled")
+	}
+	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
+		t.Fatalf("sleepContext returned too slowly after %s", elapsed)
+	}
+}
+
+func TestRunPeriodicSprayReturnsImmediatelyWhenNominated(t *testing.T) {
+	manager := NewCandidateManager("")
+	manager.Observe("0.0.0.0:3000", "1.1.1.1:5002")
+	manager.MarkSucceeded("0.0.0.0:3000", "1.1.1.1:5002")
+	if _, ok := manager.TryNominate("0.0.0.0:3000", "1.1.1.1:5002"); !ok {
+		t.Fatal("expected nomination to succeed")
+	}
+	session := &runtimeSession{
+		cm: manager,
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	started := time.Now()
+	session.runPeriodicSpray(ctx, nil, nil)
+	if elapsed := time.Since(started); elapsed > 200*time.Millisecond {
+		t.Fatalf("runPeriodicSpray() returned too slowly after nomination: %s", elapsed)
 	}
 }
 
@@ -993,6 +1963,15 @@ func TestRuntimeSessionStartSprayEnablesBirthdayFallbackAfterTargetSpray(t *test
 	}
 }
 
+func TestDirectPhaseBurstCapsAtFourPackets(t *testing.T) {
+	if got := directPhaseBurst(PunchPlan{SprayBurst: 8}); got != 4 {
+		t.Fatalf("directPhaseBurst(8) = %d, want 4", got)
+	}
+	if got := directPhaseBurst(PunchPlan{SprayBurst: 3}); got != 3 {
+		t.Fatalf("directPhaseBurst(3) = %d, want 3", got)
+	}
+}
+
 func TestRuntimeSessionStartSprayDoesNotEnableBirthdayFallbackWhenDisabled(t *testing.T) {
 	localConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
 	if err != nil {
@@ -1026,6 +2005,34 @@ func TestRuntimeSessionStartSprayDoesNotEnableBirthdayFallbackWhenDisabled(t *te
 	}
 	if len(session.snapshotSockets()) != 1 {
 		t.Fatalf("disabled birthday fallback should keep one socket, got %d", len(session.snapshotSockets()))
+	}
+}
+
+func TestWorkerForConfirmedPairMatchesAdditionalSocketOwner(t *testing.T) {
+	localConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(local) error = %v", err)
+	}
+	defer func() { _ = localConn.Close() }()
+	extraConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(extra) error = %v", err)
+	}
+	defer func() { _ = extraConn.Close() }()
+
+	rs := &runtimeSession{
+		localConn: localConn,
+		sockets:   []net.PacketConn{localConn, extraConn},
+	}
+	worker := &runtimeFamilyWorker{family: udpFamilyV4, rs: rs}
+	pair := confirmedPair{
+		owner:      rs,
+		conn:       extraConn,
+		localAddr:  extraConn.LocalAddr().String(),
+		remoteAddr: "1.1.1.1:5000",
+	}
+	if got := workerForConfirmedPair([]*runtimeFamilyWorker{worker}, pair); got != worker {
+		t.Fatalf("workerForConfirmedPair() = %#v, want owner worker", got)
 	}
 }
 
@@ -1063,6 +2070,13 @@ func TestCandidateManagerConfirmedRemote(t *testing.T) {
 	}
 }
 
+func TestCandidateManagerSeedsCandidateRemoteFromRendezvous(t *testing.T) {
+	manager := NewCandidateManager("1.1.1.1:5000")
+	if got := manager.CandidateRemote(); got != "1.1.1.1:5000" {
+		t.Fatalf("CandidateRemote() = %q, want rendezvous remote", got)
+	}
+}
+
 func TestCandidateManagerKeepsConfirmedRemoteStable(t *testing.T) {
 	manager := NewCandidateManager("1.1.1.1:5000")
 	manager.Observe("0.0.0.0:3000", "1.1.1.1:5002")
@@ -1094,6 +2108,96 @@ func TestCandidateManagerSingleNomination(t *testing.T) {
 	}
 	pair := manager.NominatedPair()
 	if pair == nil || pair.LocalAddr != "0.0.0.0:3000" || pair.RemoteAddr != "1.1.1.1:5002" {
+		t.Fatalf("unexpected nominated pair %#v", pair)
+	}
+}
+
+func TestCandidateManagerTryNominateBestPrefersHigherScore(t *testing.T) {
+	manager := NewCandidateManager("1.1.1.1:5000")
+	manager.Observe("0.0.0.0:3000", "1.1.1.1:5002")
+	manager.Observe("0.0.0.0:3001", "1.1.1.1:5010")
+	manager.MarkSucceededWithPriority("0.0.0.0:3001", "1.1.1.1:5010", CandidatePriority{
+		Score:  100,
+		Reason: "target[1]",
+	})
+	manager.MarkSucceededWithPriority("0.0.0.0:3000", "1.1.1.1:5002", CandidatePriority{
+		Score:  200,
+		Reason: "direct[0]",
+	})
+	pair, ok := manager.TryNominateBest()
+	if !ok {
+		t.Fatal("best nomination should succeed")
+	}
+	if pair == nil || pair.LocalAddr != "0.0.0.0:3000" || pair.RemoteAddr != "1.1.1.1:5002" {
+		t.Fatalf("unexpected nominated pair %#v", pair)
+	}
+	if pair.Score != 200 || pair.ScoreReason != "direct[0]" {
+		t.Fatalf("unexpected candidate priority %#v", pair)
+	}
+}
+
+func TestCandidateManagerReleaseNominationRestoresSucceededState(t *testing.T) {
+	manager := NewCandidateManager("1.1.1.1:5000")
+	manager.Observe("0.0.0.0:3000", "1.1.1.1:5002")
+	manager.MarkSucceededWithPriority("0.0.0.0:3000", "1.1.1.1:5002", CandidatePriority{
+		Score:  200,
+		Reason: "direct[0]",
+	})
+	if _, ok := manager.TryNominateBest(); !ok {
+		t.Fatal("best nomination should succeed")
+	}
+	pair := manager.ReleaseNomination("0.0.0.0:3000", "1.1.1.1:5002")
+	if pair == nil {
+		t.Fatal("ReleaseNomination should return nominated pair")
+	}
+	if pair.State != CandidateSucceeded || pair.Nominated {
+		t.Fatalf("released pair should return to succeeded state, got %#v", pair)
+	}
+	if manager.NominatedPair() != nil {
+		t.Fatal("nominated pair should be cleared after release")
+	}
+}
+
+func TestCandidateManagerAdoptNominationReplacesOlderPair(t *testing.T) {
+	manager := NewCandidateManager("1.1.1.1:5000")
+	manager.MarkSucceeded("0.0.0.0:3000", "1.1.1.1:5002")
+	manager.MarkSucceeded("0.0.0.0:3001", "1.1.1.1:5010")
+	if _, ok := manager.AdoptNomination("0.0.0.0:3000", "1.1.1.1:5002"); !ok {
+		t.Fatal("first adopt nomination should succeed")
+	}
+	if _, ok := manager.AdoptNomination("0.0.0.0:3001", "1.1.1.1:5010"); !ok {
+		t.Fatal("second adopt nomination should replace the first pair")
+	}
+	pair := manager.NominatedPair()
+	if pair == nil || pair.LocalAddr != "0.0.0.0:3001" || pair.RemoteAddr != "1.1.1.1:5010" {
+		t.Fatalf("unexpected nominated pair %#v", pair)
+	}
+	if prior := manager.candidates[candidateKey("0.0.0.0:3000", "1.1.1.1:5002")]; prior == nil || prior.Nominated || prior.State != CandidateSucceeded {
+		t.Fatalf("old nominated pair should revert to succeeded, got %#v", prior)
+	}
+}
+
+func TestCandidateManagerBackoffNominationSkipsCoolingPair(t *testing.T) {
+	manager := NewCandidateManager("1.1.1.1:5000")
+	manager.MarkSucceededWithPriority("0.0.0.0:3000", "1.1.1.1:5002", CandidatePriority{
+		Score:  200,
+		Reason: "direct[0]",
+	})
+	manager.MarkSucceededWithPriority("0.0.0.0:3001", "1.1.1.1:5010", CandidatePriority{
+		Score:  150,
+		Reason: "target[0]",
+	})
+	if _, ok := manager.TryNominateBest(); !ok {
+		t.Fatal("best nomination should succeed")
+	}
+	if pair := manager.BackoffNomination("0.0.0.0:3000", "1.1.1.1:5002", 500*time.Millisecond); pair == nil {
+		t.Fatal("BackoffNomination should return the previously nominated pair")
+	}
+	pair, ok := manager.TryNominateBest()
+	if !ok {
+		t.Fatal("cooling pair should allow the next candidate to be nominated")
+	}
+	if pair.LocalAddr != "0.0.0.0:3001" || pair.RemoteAddr != "1.1.1.1:5010" {
 		t.Fatalf("unexpected nominated pair %#v", pair)
 	}
 }
@@ -1238,7 +2342,7 @@ func TestRuntimeSessionDropsWrongTokenSilently(t *testing.T) {
 	if session.cm.NominatedPair() != nil || session.cm.ConfirmedPair() != nil || session.endpoints.CandidateRemote != "" {
 		t.Fatal("wrong-token packet should be silently dropped")
 	}
-	if session.stats.tokenMismatchDropped == 0 {
+	if stats := session.snapshotStats(); stats.tokenMismatchDropped == 0 {
 		t.Fatal("wrong-token packet should increase mismatch counter")
 	}
 
@@ -1259,8 +2363,54 @@ func TestRuntimeSessionDropsWrongTokenSilently(t *testing.T) {
 	if pair.RemoteAddr != sendConn.LocalAddr().String() {
 		t.Fatalf("nominated remote = %q, want %q", pair.RemoteAddr, sendConn.LocalAddr().String())
 	}
-	if !session.stats.tokenVerified {
+	if stats := session.snapshotStats(); !stats.tokenVerified {
 		t.Fatal("valid packet should mark token verified")
+	}
+}
+
+func TestRuntimeSessionDropsWrongWireRouteSilently(t *testing.T) {
+	readConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(read) error = %v", err)
+	}
+	defer func() { _ = readConn.Close() }()
+	sendConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(send) error = %v", err)
+	}
+	defer func() { _ = sendConn.Close() }()
+
+	session := &runtimeSession{
+		start: P2PPunchStart{
+			SessionID: "session-1",
+			Token:     "token-1",
+			Wire:      P2PWireSpec{RouteID: "route-a"},
+			Role:      common.WORK_P2P_VISITOR,
+		},
+		cm:        NewCandidateManager(""),
+		confirmed: make(chan confirmedPair, 1),
+		nominate:  make(map[string]struct{}),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go session.readLoopOnConn(ctx, readConn)
+
+	wrongRoute := newUDPPacketWithWire("session-1", "token-1", common.WORK_P2P_PROVIDER, packetTypeSucc, P2PWireSpec{RouteID: "route-b"})
+	wrongRouteRaw, err := EncodeUDPPacket(wrongRoute)
+	if err != nil {
+		t.Fatalf("EncodeUDPPacket(wrongRoute) error = %v", err)
+	}
+	if _, err := sendConn.WriteTo(wrongRouteRaw, readConn.LocalAddr()); err != nil {
+		t.Fatalf("WriteTo(wrongRoute) error = %v", err)
+	}
+	time.Sleep(150 * time.Millisecond)
+
+	if session.cm.NominatedPair() != nil || session.cm.ConfirmedPair() != nil || session.endpoints.CandidateRemote != "" {
+		t.Fatal("wrong-route packet should be silently dropped")
+	}
+	if stats := session.snapshotStats(); stats.tokenMismatchDropped == 0 {
+		t.Fatal("wrong-route packet should increase mismatch counter")
 	}
 }
 
@@ -1304,22 +2454,23 @@ func TestRuntimeSessionDropsReplaySilently(t *testing.T) {
 	}
 	time.Sleep(200 * time.Millisecond)
 
-	if session.stats.replayDropped == 0 {
+	if stats := session.snapshotStats(); stats.replayDropped == 0 {
 		t.Fatal("replayed packet should increase replay counter")
 	}
 }
 
 func TestCandidateManagerPruneAndCleanup(t *testing.T) {
 	manager := NewCandidateManager("1.1.1.1:5000")
-	pair := manager.Observe("0.0.0.0:3000", "1.1.1.1:5002")
-	pair.LastSeenAt = time.Now().Add(-10 * time.Second)
+	manager.Observe("0.0.0.0:3000", "1.1.1.1:5002")
+	key := candidateKey("0.0.0.0:3000", "1.1.1.1:5002")
+	manager.candidates[key].LastSeenAt = time.Now().Add(-10 * time.Second)
 	if pruned := manager.PruneStale(2 * time.Second); pruned != 1 {
 		t.Fatalf("PruneStale() = %d, want 1", pruned)
 	}
-	if pair.State != CandidateClosed {
-		t.Fatalf("pair state = %s, want %s", pair.State, CandidateClosed)
+	if pair := manager.candidates[key]; pair == nil || pair.State != CandidateClosed {
+		t.Fatalf("pair state = %#v, want %s", pair, CandidateClosed)
 	}
-	pair.LastSeenAt = time.Now().Add(-10 * time.Second)
+	manager.candidates[key].LastSeenAt = time.Now().Add(-10 * time.Second)
 	if removed := manager.CleanupClosed(2 * time.Second); removed != 1 {
 		t.Fatalf("CleanupClosed() = %d, want 1", removed)
 	}
@@ -1330,16 +2481,49 @@ func TestCandidateManagerPruneAndCleanup(t *testing.T) {
 
 func TestCandidateManagerCanReopenPrunedCandidateBeforeConfirm(t *testing.T) {
 	manager := NewCandidateManager("1.1.1.1:5000")
-	pair := manager.Observe("0.0.0.0:3000", "1.1.1.1:5002")
-	pair.LastSeenAt = time.Now().Add(-10 * time.Second)
+	manager.Observe("0.0.0.0:3000", "1.1.1.1:5002")
+	key := candidateKey("0.0.0.0:3000", "1.1.1.1:5002")
+	manager.candidates[key].LastSeenAt = time.Now().Add(-10 * time.Second)
 	manager.PruneStale(2 * time.Second)
 	reopened := manager.Observe("0.0.0.0:3000", "1.1.1.1:5002")
 	if reopened.State != CandidateDiscovered {
 		t.Fatalf("reopened candidate state = %s, want %s", reopened.State, CandidateDiscovered)
 	}
+	succeeded := manager.MarkSucceeded("0.0.0.0:3000", "1.1.1.1:5002")
+	if succeeded == nil || succeeded.State != CandidateSucceeded {
+		t.Fatalf("reopened candidate should succeed again, got %#v", succeeded)
+	}
+}
+
+func TestCandidateManagerReturnsSnapshotPairs(t *testing.T) {
+	manager := NewCandidateManager("1.1.1.1:5000")
+	pair := manager.Observe("0.0.0.0:3000", "1.1.1.1:5002")
+	if pair == nil {
+		t.Fatal("Observe should return a candidate snapshot")
+	}
+	pair.Score = 999
+	pair.State = CandidateClosed
+
+	current := manager.Observe("0.0.0.0:3000", "1.1.1.1:5002")
+	if current == nil {
+		t.Fatal("Observe should still return a snapshot")
+	}
+	if current.Score == 999 || current.State == CandidateClosed {
+		t.Fatalf("returned candidate pair should be a snapshot, got %#v", current)
+	}
+
 	manager.MarkSucceeded("0.0.0.0:3000", "1.1.1.1:5002")
-	if reopened.State != CandidateSucceeded {
-		t.Fatalf("reopened candidate should succeed again, got %s", reopened.State)
+	if _, nominated := manager.TryNominate("0.0.0.0:3000", "1.1.1.1:5002"); !nominated {
+		t.Fatal("TryNominate should nominate the first succeeded pair")
+	}
+	existing, nominated := manager.TryNominate("0.0.0.0:3000", "1.1.1.1:5002")
+	if nominated || existing == nil {
+		t.Fatal("TryNominate should return the existing nominated snapshot")
+	}
+	existing.State = CandidateClosed
+
+	if current := manager.NominatedPair(); current == nil || current.State == CandidateClosed {
+		t.Fatalf("nominated pair should remain internal state, got %#v", current)
 	}
 }
 
@@ -1386,6 +2570,412 @@ func TestRuntimeSessionDoesNotHandoverBeforeConfirm(t *testing.T) {
 	}
 	if session.cm.ConfirmedPair() != nil {
 		t.Fatal("confirmed pair should stay empty before ACCEPT")
+	}
+}
+
+func TestRuntimeSessionProviderWaitsForReadyBeforeHandover(t *testing.T) {
+	readConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(read) error = %v", err)
+	}
+	defer func() { _ = readConn.Close() }()
+	sendConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(send) error = %v", err)
+	}
+	defer func() { _ = sendConn.Close() }()
+
+	session := &runtimeSession{
+		start: P2PPunchStart{
+			SessionID: "session-1",
+			Token:     "token-1",
+			Role:      common.WORK_P2P_PROVIDER,
+		},
+		plan:      PunchPlan{NominationRetryInterval: 40 * time.Millisecond},
+		cm:        NewCandidateManager(""),
+		confirmed: make(chan confirmedPair, 1),
+		nominate:  make(map[string]struct{}),
+		accept:    make(map[string]struct{}),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go session.readLoopOnConn(ctx, readConn)
+
+	end := newUDPPacket("session-1", "token-1", common.WORK_P2P_VISITOR, packetTypeEnd)
+	end.NominationEpoch = 1
+	endRaw, err := EncodeUDPPacket(end)
+	if err != nil {
+		t.Fatalf("EncodeUDPPacket(end) error = %v", err)
+	}
+	if _, err := sendConn.WriteTo(endRaw, readConn.LocalAddr()); err != nil {
+		t.Fatalf("WriteTo(end) error = %v", err)
+	}
+	time.Sleep(120 * time.Millisecond)
+
+	select {
+	case pair := <-session.confirmed:
+		t.Fatalf("provider should not handover before READY, got %#v", pair)
+	default:
+	}
+	if session.cm.ConfirmedPair() != nil {
+		t.Fatal("provider should not mark pair confirmed before READY")
+	}
+	if session.cm.NominatedPair() == nil {
+		t.Fatal("provider should keep a nominated pair after END")
+	}
+
+	ready := newUDPPacket("session-1", "token-1", common.WORK_P2P_VISITOR, packetTypeReady)
+	ready.NominationEpoch = 1
+	readyRaw, err := EncodeUDPPacket(ready)
+	if err != nil {
+		t.Fatalf("EncodeUDPPacket(ready) error = %v", err)
+	}
+	if _, err := sendConn.WriteTo(readyRaw, readConn.LocalAddr()); err != nil {
+		t.Fatalf("WriteTo(ready) error = %v", err)
+	}
+
+	select {
+	case pair := <-session.confirmed:
+		if pair.remoteAddr != sendConn.LocalAddr().String() {
+			t.Fatalf("confirmed remote = %q, want %q", pair.remoteAddr, sendConn.LocalAddr().String())
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("provider should handover after READY")
+	}
+}
+
+func TestRuntimeSessionVisitorSendsReadyAfterAccept(t *testing.T) {
+	readConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(read) error = %v", err)
+	}
+	defer func() { _ = readConn.Close() }()
+	sendConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(send) error = %v", err)
+	}
+	defer func() { _ = sendConn.Close() }()
+
+	session := &runtimeSession{
+		start: P2PPunchStart{
+			SessionID: "session-1",
+			Token:     "token-1",
+			Role:      common.WORK_P2P_VISITOR,
+		},
+		cm:        NewCandidateManager(""),
+		confirmed: make(chan confirmedPair, 1),
+		nominate:  make(map[string]struct{}),
+	}
+	session.cm.Observe(readConn.LocalAddr().String(), sendConn.LocalAddr().String())
+	session.cm.MarkSucceeded(readConn.LocalAddr().String(), sendConn.LocalAddr().String())
+	if _, ok := session.cm.TryNominate(readConn.LocalAddr().String(), sendConn.LocalAddr().String()); !ok {
+		t.Fatal("visitor should nominate pair before ACCEPT")
+	}
+	session.setOutboundNomination(readConn.LocalAddr().String(), sendConn.LocalAddr().String(), 1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go session.readLoopOnConn(ctx, readConn)
+
+	accept := newUDPPacket("session-1", "token-1", common.WORK_P2P_PROVIDER, packetTypeAccept)
+	accept.NominationEpoch = 1
+	acceptRaw, err := EncodeUDPPacket(accept)
+	if err != nil {
+		t.Fatalf("EncodeUDPPacket(accept) error = %v", err)
+	}
+	if _, err := sendConn.WriteTo(acceptRaw, readConn.LocalAddr()); err != nil {
+		t.Fatalf("WriteTo(accept) error = %v", err)
+	}
+
+	buf := make([]byte, 2048)
+	_ = sendConn.SetReadDeadline(time.Now().Add(400 * time.Millisecond))
+	defer func() { _ = sendConn.SetReadDeadline(time.Time{}) }()
+	receivedReady := false
+	for !receivedReady {
+		n, _, err := sendConn.ReadFrom(buf)
+		if err != nil {
+			t.Fatalf("ReadFrom() error = %v", err)
+		}
+		packet, err := DecodeUDPPacket(buf[:n], "token-1")
+		if err != nil {
+			t.Fatalf("DecodeUDPPacket(ready) error = %v", err)
+		}
+		if packet.Type == packetTypeReady {
+			receivedReady = true
+		}
+	}
+
+	select {
+	case pair := <-session.confirmed:
+		if pair.remoteAddr != sendConn.LocalAddr().String() {
+			t.Fatalf("confirmed remote = %q, want %q", pair.remoteAddr, sendConn.LocalAddr().String())
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("visitor should handover after ACCEPT")
+	}
+}
+
+func TestRuntimeSessionProviderSwitchesToHigherEpochProposal(t *testing.T) {
+	readConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(read) error = %v", err)
+	}
+	defer func() { _ = readConn.Close() }()
+	firstConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(first) error = %v", err)
+	}
+	defer func() { _ = firstConn.Close() }()
+	secondConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(second) error = %v", err)
+	}
+	defer func() { _ = secondConn.Close() }()
+
+	session := &runtimeSession{
+		start: P2PPunchStart{
+			SessionID: "session-1",
+			Token:     "token-1",
+			Role:      common.WORK_P2P_PROVIDER,
+		},
+		plan:      PunchPlan{NominationRetryInterval: 40 * time.Millisecond},
+		cm:        NewCandidateManager(""),
+		confirmed: make(chan confirmedPair, 1),
+		nominate:  make(map[string]struct{}),
+		accept:    make(map[string]struct{}),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go session.readLoopOnConn(ctx, readConn)
+
+	end1 := newUDPPacket("session-1", "token-1", common.WORK_P2P_VISITOR, packetTypeEnd)
+	end1.NominationEpoch = 1
+	raw1, err := EncodeUDPPacket(end1)
+	if err != nil {
+		t.Fatalf("EncodeUDPPacket(end1) error = %v", err)
+	}
+	if _, err := firstConn.WriteTo(raw1, readConn.LocalAddr()); err != nil {
+		t.Fatalf("WriteTo(end1) error = %v", err)
+	}
+	time.Sleep(80 * time.Millisecond)
+
+	end2 := newUDPPacket("session-1", "token-1", common.WORK_P2P_VISITOR, packetTypeEnd)
+	end2.NominationEpoch = 2
+	raw2, err := EncodeUDPPacket(end2)
+	if err != nil {
+		t.Fatalf("EncodeUDPPacket(end2) error = %v", err)
+	}
+	if _, err := secondConn.WriteTo(raw2, readConn.LocalAddr()); err != nil {
+		t.Fatalf("WriteTo(end2) error = %v", err)
+	}
+	time.Sleep(120 * time.Millisecond)
+
+	if pair := session.cm.NominatedPair(); pair == nil || pair.RemoteAddr != secondConn.LocalAddr().String() {
+		t.Fatalf("provider should follow higher epoch proposal, got %#v", pair)
+	}
+
+	ready1 := newUDPPacket("session-1", "token-1", common.WORK_P2P_VISITOR, packetTypeReady)
+	ready1.NominationEpoch = 1
+	ready1Raw, err := EncodeUDPPacket(ready1)
+	if err != nil {
+		t.Fatalf("EncodeUDPPacket(ready1) error = %v", err)
+	}
+	if _, err := firstConn.WriteTo(ready1Raw, readConn.LocalAddr()); err != nil {
+		t.Fatalf("WriteTo(ready1) error = %v", err)
+	}
+	time.Sleep(120 * time.Millisecond)
+	select {
+	case pair := <-session.confirmed:
+		t.Fatalf("stale READY should not confirm, got %#v", pair)
+	default:
+	}
+
+	ready2 := newUDPPacket("session-1", "token-1", common.WORK_P2P_VISITOR, packetTypeReady)
+	ready2.NominationEpoch = 2
+	ready2Raw, err := EncodeUDPPacket(ready2)
+	if err != nil {
+		t.Fatalf("EncodeUDPPacket(ready2) error = %v", err)
+	}
+	if _, err := secondConn.WriteTo(ready2Raw, readConn.LocalAddr()); err != nil {
+		t.Fatalf("WriteTo(ready2) error = %v", err)
+	}
+
+	select {
+	case pair := <-session.confirmed:
+		if pair.remoteAddr != secondConn.LocalAddr().String() {
+			t.Fatalf("confirmed remote = %q, want %q", pair.remoteAddr, secondConn.LocalAddr().String())
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("provider should confirm after READY for the higher epoch proposal")
+	}
+}
+
+func TestRuntimeSessionVisitorIgnoresStaleAcceptAfterRenomination(t *testing.T) {
+	readConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(read) error = %v", err)
+	}
+	defer func() { _ = readConn.Close() }()
+	firstConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(first) error = %v", err)
+	}
+	defer func() { _ = firstConn.Close() }()
+	secondConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(second) error = %v", err)
+	}
+	defer func() { _ = secondConn.Close() }()
+
+	session := &runtimeSession{
+		start: P2PPunchStart{
+			SessionID: "session-1",
+			Token:     "token-1",
+			Role:      common.WORK_P2P_VISITOR,
+		},
+		cm:        NewCandidateManager(""),
+		confirmed: make(chan confirmedPair, 1),
+		nominate:  make(map[string]struct{}),
+	}
+	session.cm.MarkSucceeded(readConn.LocalAddr().String(), firstConn.LocalAddr().String())
+	session.cm.MarkSucceeded(readConn.LocalAddr().String(), secondConn.LocalAddr().String())
+	if _, ok := session.cm.AdoptNomination(readConn.LocalAddr().String(), firstConn.LocalAddr().String()); !ok {
+		t.Fatal("expected first nomination to be adopted")
+	}
+	session.setOutboundNomination(readConn.LocalAddr().String(), firstConn.LocalAddr().String(), 1)
+	if session.cm.BackoffNomination(readConn.LocalAddr().String(), firstConn.LocalAddr().String(), time.Second) == nil {
+		t.Fatal("expected first nomination to back off")
+	}
+	if _, ok := session.cm.AdoptNomination(readConn.LocalAddr().String(), secondConn.LocalAddr().String()); !ok {
+		t.Fatal("expected second nomination to be adopted")
+	}
+	session.setOutboundNomination(readConn.LocalAddr().String(), secondConn.LocalAddr().String(), 2)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go session.readLoopOnConn(ctx, readConn)
+
+	staleAccept := newUDPPacket("session-1", "token-1", common.WORK_P2P_PROVIDER, packetTypeAccept)
+	staleAccept.NominationEpoch = 1
+	staleRaw, err := EncodeUDPPacket(staleAccept)
+	if err != nil {
+		t.Fatalf("EncodeUDPPacket(staleAccept) error = %v", err)
+	}
+	if _, err := firstConn.WriteTo(staleRaw, readConn.LocalAddr()); err != nil {
+		t.Fatalf("WriteTo(staleAccept) error = %v", err)
+	}
+	time.Sleep(120 * time.Millisecond)
+	select {
+	case pair := <-session.confirmed:
+		t.Fatalf("stale ACCEPT should not confirm, got %#v", pair)
+	default:
+	}
+
+	accept := newUDPPacket("session-1", "token-1", common.WORK_P2P_PROVIDER, packetTypeAccept)
+	accept.NominationEpoch = 2
+	acceptRaw, err := EncodeUDPPacket(accept)
+	if err != nil {
+		t.Fatalf("EncodeUDPPacket(accept) error = %v", err)
+	}
+	if _, err := secondConn.WriteTo(acceptRaw, readConn.LocalAddr()); err != nil {
+		t.Fatalf("WriteTo(accept) error = %v", err)
+	}
+
+	select {
+	case pair := <-session.confirmed:
+		if pair.remoteAddr != secondConn.LocalAddr().String() {
+			t.Fatalf("confirmed remote = %q, want %q", pair.remoteAddr, secondConn.LocalAddr().String())
+		}
+	case <-time.After(250 * time.Millisecond):
+		t.Fatal("visitor should confirm only the latest nomination epoch")
+	}
+}
+
+func TestRuntimeSessionDelayedNominationPrefersHigherRankedSuccess(t *testing.T) {
+	readConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(read) error = %v", err)
+	}
+	defer func() { _ = readConn.Close() }()
+	betterConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(better) error = %v", err)
+	}
+	defer func() { _ = betterConn.Close() }()
+	worseConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket(worse) error = %v", err)
+	}
+	defer func() { _ = worseConn.Close() }()
+
+	summary := P2PProbeSummary{
+		Self: P2PPeerInfo{
+			LocalAddrs: []string{readConn.LocalAddr().String()},
+		},
+		Peer: P2PPeerInfo{
+			Nat: NatObservation{
+				PublicIP:         "127.0.0.1",
+				ObservedBasePort: common.GetPortByAddr(betterConn.LocalAddr().String()),
+				Samples: []ProbeSample{
+					{ObservedAddr: betterConn.LocalAddr().String()},
+					{ObservedAddr: worseConn.LocalAddr().String()},
+				},
+			},
+		},
+	}
+	plan := PunchPlan{
+		NominationDelay:         120 * time.Millisecond,
+		NominationRetryInterval: 40 * time.Millisecond,
+	}
+	session := &runtimeSession{
+		start: P2PPunchStart{
+			SessionID: "session-1",
+			Token:     "token-1",
+			Role:      common.WORK_P2P_VISITOR,
+		},
+		summary:   summary,
+		plan:      plan,
+		localConn: readConn,
+		sockets:   []net.PacketConn{readConn},
+		cm:        NewCandidateManager(""),
+		ranker:    NewCandidateRanker(summary.Self, summary.Peer, plan),
+		confirmed: make(chan confirmedPair, 1),
+		nominate:  make(map[string]struct{}),
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go session.readLoopOnConn(ctx, readConn)
+
+	worse := newUDPPacket("session-1", "token-1", common.WORK_P2P_PROVIDER, packetTypeSucc)
+	worseRaw, err := EncodeUDPPacket(worse)
+	if err != nil {
+		t.Fatalf("EncodeUDPPacket(worse) error = %v", err)
+	}
+	if _, err := worseConn.WriteTo(worseRaw, readConn.LocalAddr()); err != nil {
+		t.Fatalf("WriteTo(worse) error = %v", err)
+	}
+	time.Sleep(30 * time.Millisecond)
+
+	better := newUDPPacket("session-1", "token-1", common.WORK_P2P_PROVIDER, packetTypeSucc)
+	betterRaw, err := EncodeUDPPacket(better)
+	if err != nil {
+		t.Fatalf("EncodeUDPPacket(better) error = %v", err)
+	}
+	if _, err := betterConn.WriteTo(betterRaw, readConn.LocalAddr()); err != nil {
+		t.Fatalf("WriteTo(better) error = %v", err)
+	}
+	time.Sleep(220 * time.Millisecond)
+
+	pair := session.cm.NominatedPair()
+	if pair == nil {
+		t.Fatal("expected delayed nomination to select a candidate")
+	}
+	if pair.RemoteAddr != betterConn.LocalAddr().String() {
+		t.Fatalf("nominated remote = %q, want %q", pair.RemoteAddr, betterConn.LocalAddr().String())
+	}
+	if !strings.HasPrefix(pair.ScoreReason, "responsive_public(") {
+		t.Fatalf("nominated pair score reason = %q, want responsive_public(...)", pair.ScoreReason)
 	}
 }
 
@@ -1443,7 +3033,7 @@ func TestCrosstalkPacketDoesNotAffectOtherSession(t *testing.T) {
 	if sessionB.cm.NominatedPair() != nil || sessionB.cm.ConfirmedPair() != nil || sessionB.endpoints.CandidateRemote != "" {
 		t.Fatal("session B should ignore crosstalk packet from session A")
 	}
-	if sessionB.stats.tokenMismatchDropped == 0 {
+	if stats := sessionB.snapshotStats(); stats.tokenMismatchDropped == 0 {
 		t.Fatal("session B should count mismatched crosstalk packet")
 	}
 }
@@ -1468,15 +3058,18 @@ func TestMapP2PContextError(t *testing.T) {
 	}
 }
 
-func TestEffectiveExtraReplySeen(t *testing.T) {
-	if !effectiveExtraReplySeen(false, false) {
-		t.Fatal("disabled extra reply should not force restricted inference")
+func TestFilteringEvidenceKnown(t *testing.T) {
+	if filteringEvidenceKnown(NatObservation{}) {
+		t.Fatal("empty observation should not report filtering evidence")
 	}
-	if effectiveExtraReplySeen(false, true) {
-		t.Fatal("missing expected extra reply should stay false")
+	if !filteringEvidenceKnown(NatObservation{FilteringTested: true}) {
+		t.Fatal("explicit filtering tested flag should report evidence")
 	}
-	if !effectiveExtraReplySeen(true, true) {
-		t.Fatal("observed extra reply should stay true")
+	if !filteringEvidenceKnown(NatObservation{FilteringBehavior: NATFilteringPortRestricted}) {
+		t.Fatal("explicit filtering behavior should report evidence")
+	}
+	if !filteringEvidenceKnown(NatObservation{NATType: NATTypeRestrictedCone}) {
+		t.Fatal("restricted cone nat type should imply filtering evidence")
 	}
 }
 
@@ -1527,11 +3120,15 @@ func TestDecodeUDPPacketWithLookup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("EncodeUDPPacket() error = %v", err)
 	}
-	decoded, err := DecodeUDPPacketWithLookup(raw, func(sessionID string) (string, bool) {
-		if sessionID != "session-lookup" {
-			return "", false
+	wantRouteKey := WireRouteKey(packet.WireID)
+	decoded, err := DecodeUDPPacketWithLookup(raw, func(routeKey string) (UDPPacketLookupResult, bool) {
+		if routeKey != wantRouteKey {
+			return UDPPacketLookupResult{}, false
 		}
-		return "token-lookup", true
+		return UDPPacketLookupResult{
+			SessionID: "session-lookup",
+			Token:     "token-lookup",
+		}, true
 	})
 	if err != nil {
 		t.Fatalf("DecodeUDPPacketWithLookup() error = %v", err)
@@ -1539,8 +3136,11 @@ func TestDecodeUDPPacketWithLookup(t *testing.T) {
 	if decoded.SessionID != "session-lookup" || decoded.Token != "token-lookup" {
 		t.Fatalf("decoded packet mismatch: %#v", decoded)
 	}
-	if _, err := DecodeUDPPacketWithLookup(raw, func(sessionID string) (string, bool) {
-		return "", false
+	if decoded.WireID != wantRouteKey {
+		t.Fatalf("decoded wire route = %q, want %q", decoded.WireID, wantRouteKey)
+	}
+	if _, err := DecodeUDPPacketWithLookup(raw, func(routeKey string) (UDPPacketLookupResult, bool) {
+		return UDPPacketLookupResult{}, false
 	}); !errors.Is(err, ErrP2PTokenMismatch) {
 		t.Fatalf("expected ErrP2PTokenMismatch for missing lookup, got %v", err)
 	}
@@ -1560,6 +3160,26 @@ func TestReplayWindowRejectsExpiredFutureAndDuplicatePackets(t *testing.T) {
 	}
 	if window.Accept(now, "ok") {
 		t.Fatal("duplicate nonce should be rejected")
+	}
+}
+
+func TestReplayWindowCapsObservedEntries(t *testing.T) {
+	window := newReplayWindow(5*time.Second, 3)
+	now := time.Now().UnixMilli()
+	for i := 0; i < 6; i++ {
+		if !window.Accept(now+int64(i), strconv.Itoa(i)) {
+			t.Fatalf("nonce %d should be accepted", i)
+		}
+	}
+	window.mu.Lock()
+	size := len(window.observed)
+	_, oldestPresent := window.observed["0"]
+	window.mu.Unlock()
+	if size != 3 {
+		t.Fatalf("replay window size = %d, want capped at 3", size)
+	}
+	if oldestPresent {
+		t.Fatal("oldest replay nonce should be evicted when the window reaches capacity")
 	}
 }
 
@@ -1605,6 +3225,188 @@ func TestBuildHistoricalPredictionPortsOrdersByFrequency(t *testing.T) {
 		t.Fatalf("ports[0] = %d, want 5006", ports[0])
 	}
 }
+
+func TestPredictionHistoryOffsetsPreferRecentWhenFrequencyMatches(t *testing.T) {
+	resetPredictionHistoryForTest()
+	t.Cleanup(resetPredictionHistoryForTest)
+
+	key := predictionHistoryKey(NatObservation{
+		PublicIP:         "1.1.1.1",
+		ObservedBasePort: 5000,
+		ObservedInterval: 2,
+		NATType:          NATTypeSymmetric,
+		MappingBehavior:  NATMappingEndpointDependent,
+	})
+	now := time.Now()
+	globalPredictionHistory.mu.Lock()
+	globalPredictionHistory.entries[key] = &predictionHistoryEntry{
+		updatedAt: now,
+		offsets: map[int]predictionOffsetStat{
+			6: {count: 2, updatedAt: now.Add(-20 * time.Minute)},
+			8: {count: 2, updatedAt: now.Add(-1 * time.Minute)},
+		},
+	}
+	globalPredictionHistory.mu.Unlock()
+
+	offsets := predictionHistoryOffsets(NatObservation{
+		PublicIP:         "1.1.1.1",
+		ObservedBasePort: 5000,
+		ObservedInterval: 2,
+		NATType:          NATTypeSymmetric,
+		MappingBehavior:  NATMappingEndpointDependent,
+	})
+	if len(offsets) < 2 {
+		t.Fatalf("expected recent offsets, got %#v", offsets)
+	}
+	if offsets[0] != 8 {
+		t.Fatalf("offsets[0] = %d, want 8", offsets[0])
+	}
+}
+
+func TestBuildPredictedPortsAddsHistoryNeighborsBeforeWideSweep(t *testing.T) {
+	resetPredictionHistoryForTest()
+	t.Cleanup(resetPredictionHistoryForTest)
+
+	obs := NatObservation{
+		PublicIP:         "1.1.1.1",
+		ObservedBasePort: 5000,
+		ObservedInterval: 2,
+		NATType:          NATTypeSymmetric,
+		MappingBehavior:  NATMappingEndpointDependent,
+	}
+	recordPredictionSuccess(obs, "1.1.1.1:5006")
+	recordPredictionSuccess(obs, "1.1.1.1:5006")
+
+	ports := BuildPredictedPorts(obs, []int{2}, 6)
+	if len(ports) < 4 {
+		t.Fatalf("expected predicted ports, got %#v", ports)
+	}
+	if ports[0] != 5006 {
+		t.Fatalf("ports[0] = %d, want 5006", ports[0])
+	}
+	if ports[1] != 5005 || ports[2] != 5007 {
+		t.Fatalf("neighbor ports should follow exact history hit, got %#v", ports)
+	}
+}
+
+func TestBuildPredictedPortsPrefersLikelyNextAfterSequentialSamples(t *testing.T) {
+	obs := NatObservation{
+		PublicIP:         "1.1.1.1",
+		ObservedBasePort: 5000,
+		ObservedInterval: 2,
+		NATType:          NATTypeSymmetric,
+		MappingBehavior:  NATMappingEndpointDependent,
+		Samples: []ProbeSample{
+			{ObservedAddr: "1.1.1.1:5000"},
+			{ObservedAddr: "1.1.1.1:5002"},
+			{ObservedAddr: "1.1.1.1:5004"},
+		},
+	}
+
+	ports := BuildPredictedPorts(obs, []int{2}, 6)
+	if len(ports) == 0 {
+		t.Fatalf("expected predicted ports, got %#v", ports)
+	}
+	if ports[0] != 5006 {
+		t.Fatalf("ports[0] = %d, want likely next 5006", ports[0])
+	}
+}
+
+func TestPortMappingRenewIntervalTracksLeaseLifetime(t *testing.T) {
+	if got := portMappingRenewInterval(20); got != 10*time.Second {
+		t.Fatalf("portMappingRenewInterval(20) = %s, want 10s", got)
+	}
+	if got := portMappingRenewInterval(5); got != 2500*time.Millisecond {
+		t.Fatalf("portMappingRenewInterval(5) = %s, want 2500ms", got)
+	}
+	if got := portMappingRenewInterval(1); got != 750*time.Millisecond {
+		t.Fatalf("portMappingRenewInterval(1) = %s, want 750ms", got)
+	}
+}
+
+func TestCloseSocketsDoesNotHoldSessionLockDuringClose(t *testing.T) {
+	session := &runtimeSession{}
+	socket := &testPacketConn{
+		localAddr: &net.UDPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 4000},
+		onClose: func() {
+			_ = session.snapshotSockets()
+		},
+	}
+	session.sockets = []net.PacketConn{socket}
+
+	done := make(chan struct{})
+	go func() {
+		session.closeSockets(nil)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("closeSockets should not deadlock when Close re-enters runtimeSession state")
+	}
+	if sockets := session.snapshotSockets(); len(sockets) != 0 {
+		t.Fatalf("closeSockets should clear session sockets, got %#v", sockets)
+	}
+}
+
+func TestStopSocketReadLoopInterruptsWinnerReadLoop(t *testing.T) {
+	localConn, err := net.ListenPacket("udp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket() error = %v", err)
+	}
+	defer func() { _ = localConn.Close() }()
+
+	session := &runtimeSession{
+		localConn:    localConn,
+		sockets:      []net.PacketConn{localConn},
+		readLoopDone: make(map[net.PacketConn]chan struct{}),
+		cm:           NewCandidateManager(""),
+		replay:       NewReplayWindow(30 * time.Second),
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	session.startReadLoop(ctx, localConn)
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	if ok := session.stopSocketReadLoop(localConn, 250*time.Millisecond); !ok {
+		t.Fatal("stopSocketReadLoop() should unblock the read loop before handover")
+	}
+
+	deadline := time.Now().Add(250 * time.Millisecond)
+	for {
+		session.mu.Lock()
+		_, exists := session.readLoopDone[localConn]
+		session.mu.Unlock()
+		if !exists {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("read loop bookkeeping should be cleared after shutdown")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+type testPacketConn struct {
+	localAddr net.Addr
+	onClose   func()
+}
+
+func (c *testPacketConn) ReadFrom(_ []byte) (int, net.Addr, error) {
+	return 0, nil, errors.New("not implemented")
+}
+func (c *testPacketConn) WriteTo(b []byte, _ net.Addr) (int, error) { return len(b), nil }
+func (c *testPacketConn) Close() error {
+	if c.onClose != nil {
+		c.onClose()
+	}
+	return nil
+}
+func (c *testPacketConn) LocalAddr() net.Addr                { return c.localAddr }
+func (c *testPacketConn) SetDeadline(_ time.Time) error      { return nil }
+func (c *testPacketConn) SetReadDeadline(_ time.Time) error  { return nil }
+func (c *testPacketConn) SetWriteDeadline(_ time.Time) error { return nil }
 
 func TestBuildPCPRequestMappingPacket(t *testing.T) {
 	clientIP := netip.MustParseAddr("192.168.1.10")

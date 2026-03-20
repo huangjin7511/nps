@@ -11,12 +11,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/beego/beego"
 	"github.com/caddyserver/certmagic"
 	"github.com/djylb/nps/lib/common"
 	"github.com/djylb/nps/lib/file"
 	"github.com/djylb/nps/lib/index"
 	"github.com/djylb/nps/lib/logs"
+	"github.com/djylb/nps/lib/servercfg"
 	"github.com/djylb/nps/server/connection"
 	"github.com/djylb/nps/server/proxy"
 )
@@ -65,25 +65,26 @@ func NewHttpProxy(bridge proxy.NetBridge, task *file.Tunnel, httpPort, httpsPort
 }
 
 func (s *HttpProxy) Start() error {
+	cfg := servercfg.Current()
 	var err error
-	s.ErrorContent, err = common.ReadAllFromFile(common.ResolvePath(beego.AppConfig.DefaultString("error_page", "web/static/page/error.html")))
+	s.ErrorContent, err = common.ReadAllFromFile(common.ResolvePath(cfg.Proxy.ErrorPage))
 	if err != nil {
 		s.ErrorContent = []byte("nps 404")
 	}
-	s.TimeLimitErrorContent = s.loadOptionalErrorPage("error_page_time_limit")
-	s.FlowLimitErrorContent = s.loadOptionalErrorPage("error_page_flow_limit")
-	s.ErrorAlways = beego.AppConfig.DefaultBool("error_always", false)
+	s.TimeLimitErrorContent = s.loadOptionalErrorPage(cfg.Proxy.ErrorPageTimeLimit)
+	s.FlowLimitErrorContent = s.loadOptionalErrorPage(cfg.Proxy.ErrorPageFlowLimit)
+	s.ErrorAlways = cfg.Proxy.ErrorAlways
 
 	if s.Bridge.IsServer() {
-		s.Http3Bridge = beego.AppConfig.DefaultBool("bridge_http3", true)
+		s.Http3Bridge = cfg.Proxy.BridgeHTTP3
 	}
 
-	s.ForceAutoSsl = beego.AppConfig.DefaultBool("force_auto_ssl", false)
+	s.ForceAutoSsl = cfg.Proxy.ForceAutoSSL
 
 	certmagic.Default.Logger = logs.ZapLogger
 	certmagic.DefaultACME.Agreed = true
-	certmagic.DefaultACME.Email = beego.AppConfig.String("ssl_email")
-	switch strings.ToLower(beego.AppConfig.DefaultString("ssl_ca", "LetsEncrypt")) {
+	certmagic.DefaultACME.Email = cfg.Proxy.SSL.Email
+	switch strings.ToLower(cfg.Proxy.SSL.CA) {
 	case "letsencrypt", "le", "prod", "production":
 		certmagic.DefaultACME.CA = certmagic.LetsEncryptProductionCA
 	case "zerossl", "zero", "zs":
@@ -94,13 +95,13 @@ func (s *HttpProxy) Start() error {
 		certmagic.DefaultACME.CA = certmagic.LetsEncryptStagingCA
 	}
 	certmagic.Default.Storage = &certmagic.FileStorage{
-		Path: common.ResolvePath(beego.AppConfig.DefaultString("ssl_path", "ssl")),
+		Path: common.ResolvePath(cfg.Proxy.SSL.Path),
 	}
 	s.Magic = certmagic.NewDefault()
 	if certmagic.DefaultACME.CA == certmagic.ZeroSSLProductionCA {
 		s.Magic.Issuers = []certmagic.Issuer{
 			&certmagic.ZeroSSLIssuer{
-				APIKey: beego.AppConfig.String("ssl_zerossl_api"),
+				APIKey: cfg.Proxy.SSL.ZeroSSLAPI,
 			},
 		}
 	}
@@ -118,7 +119,7 @@ func (s *HttpProxy) Start() error {
 	}
 	s.Acme = certmagic.NewACMEIssuer(s.Magic, certmagic.DefaultACME)
 
-	s.ResponseHeaderTimeout = time.Duration(beego.AppConfig.DefaultInt("http_proxy_response_timeout", 100)) * time.Second
+	s.ResponseHeaderTimeout = time.Duration(cfg.Proxy.ResponseTimeout) * time.Second
 
 	// Start Server
 	if s.HttpPort > 0 {
@@ -174,15 +175,15 @@ func (s *HttpProxy) Start() error {
 	return nil
 }
 
-func (s *HttpProxy) loadOptionalErrorPage(configKey string) []byte {
-	path := strings.TrimSpace(beego.AppConfig.String(configKey))
+func (s *HttpProxy) loadOptionalErrorPage(path string) []byte {
+	path = strings.TrimSpace(path)
 	if path == "" {
 		return nil
 	}
 
 	content, err := common.ReadAllFromFile(common.ResolvePath(path))
 	if err != nil {
-		logs.Warn("Failed to load %s from %s: %v", configKey, path, err)
+		logs.Warn("Failed to load error page from %s: %v", path, err)
 		return nil
 	}
 	return content
@@ -204,14 +205,15 @@ func (s *HttpProxy) Close() error {
 
 // ChangeHostAndHeader Change headers and host of request
 func (s *HttpProxy) ChangeHostAndHeader(r *http.Request, host string, header string, httpOnly bool) {
+	cfg := servercfg.Current()
 	// 设置 Host 头部信息
 	scheme := "http"
 	ssl := "off"
-	serverPort := beego.AppConfig.DefaultString("http_proxy_port", "80")
+	serverPort := proxyPortString(cfg.Network.HTTPProxyPort, "80")
 	if r.TLS != nil {
 		scheme = "https"
 		ssl = "on"
-		serverPort = beego.AppConfig.DefaultString("https_proxy_port", "443")
+		serverPort = proxyPortString(cfg.Network.HTTPSProxyPort, "443")
 	}
 	// Host 不带端口
 	origHost := r.Host
@@ -243,7 +245,7 @@ func (s *HttpProxy) ChangeHostAndHeader(r *http.Request, host string, header str
 	// 判断是否需要添加真实 IP 信息
 	var addOrigin bool
 	if !httpOnly {
-		addOrigin, _ = beego.AppConfig.Bool("http_add_origin_header")
+		addOrigin = cfg.Proxy.AddOriginHeader
 		//r.Header.Set("X-Forwarded-For", proxyAddXFF)
 	} else {
 		addOrigin = false
@@ -328,6 +330,7 @@ func (s *HttpProxy) ChangeHostAndHeader(r *http.Request, host string, header str
 
 // ChangeResponseHeader Change headers of response
 func (s *HttpProxy) ChangeResponseHeader(resp *http.Response, header string) {
+	cfg := servercfg.Current()
 	if header == "" {
 		return
 	}
@@ -336,9 +339,9 @@ func (s *HttpProxy) ChangeResponseHeader(resp *http.Response, header string) {
 		return
 	}
 
-	httpPort := beego.AppConfig.DefaultString("http_proxy_port", "80")
-	httpsPort := beego.AppConfig.DefaultString("https_proxy_port", "443")
-	http3Port := beego.AppConfig.DefaultString("http3_proxy_port", httpsPort)
+	httpPort := proxyPortString(cfg.Network.HTTPProxyPort, "80")
+	httpsPort := proxyPortString(cfg.Network.HTTPSProxyPort, "443")
+	http3Port := proxyPortString(cfg.Network.HTTP3ProxyPort, httpsPort)
 
 	scheme := "http"
 	ssl := "off"
@@ -430,6 +433,7 @@ func (s *HttpProxy) ChangeResponseHeader(resp *http.Response, header string) {
 
 // ChangeRedirectURL Change redirect URL
 func (s *HttpProxy) ChangeRedirectURL(r *http.Request, url string) string {
+	cfg := servercfg.Current()
 	val := strings.TrimSpace(url)
 	val = html.UnescapeString(val)
 
@@ -440,11 +444,11 @@ func (s *HttpProxy) ChangeRedirectURL(r *http.Request, url string) string {
 	// 设置 Host 头部信息
 	scheme := "http"
 	ssl := "off"
-	serverPort := beego.AppConfig.DefaultString("http_proxy_port", "80")
+	serverPort := proxyPortString(cfg.Network.HTTPProxyPort, "80")
 	if r.TLS != nil {
 		scheme = "https"
 		ssl = "on"
-		serverPort = beego.AppConfig.DefaultString("https_proxy_port", "443")
+		serverPort = proxyPortString(cfg.Network.HTTPSProxyPort, "443")
 	}
 
 	// Host 不带端口
@@ -490,4 +494,11 @@ func (s *HttpProxy) ChangeRedirectURL(r *http.Request, url string) string {
 	)
 
 	return rep.Replace(val)
+}
+
+func proxyPortString(port int, fallback string) string {
+	if port == 0 {
+		return fallback
+	}
+	return strconv.Itoa(port)
 }

@@ -16,33 +16,42 @@ const (
 )
 
 type CandidatePair struct {
-	LocalAddr   string         `json:"local_addr"`
-	RemoteAddr  string         `json:"remote_addr"`
-	State       CandidateState `json:"state"`
-	FirstSeenAt time.Time      `json:"first_seen_at"`
-	LastSeenAt  time.Time      `json:"last_seen_at"`
-	Nominated   bool           `json:"nominated"`
-	Confirmed   bool           `json:"confirmed"`
+	LocalAddr               string         `json:"local_addr"`
+	RemoteAddr              string         `json:"remote_addr"`
+	State                   CandidateState `json:"state"`
+	FirstSeenAt             time.Time      `json:"first_seen_at"`
+	LastSeenAt              time.Time      `json:"last_seen_at"`
+	SucceededAt             time.Time      `json:"succeeded_at,omitempty"`
+	Nominated               bool           `json:"nominated"`
+	Confirmed               bool           `json:"confirmed"`
+	SuccessCount            int            `json:"success_count,omitempty"`
+	Score                   int            `json:"score,omitempty"`
+	ScoreReason             string         `json:"score_reason,omitempty"`
+	NominationFailures      int            `json:"nomination_failures,omitempty"`
+	NominationCooldownUntil time.Time      `json:"nomination_cooldown_until,omitempty"`
 }
 
 type CandidateManager struct {
-	mu               sync.Mutex
-	candidates       map[string]*CandidatePair
-	rendezvousRemote string
-	nominatedKey     string
-	confirmedKey     string
-	candidateRemote  string
-	confirmedRemote  string
+	mu              sync.Mutex
+	candidates      map[string]*CandidatePair
+	nominatedKey    string
+	confirmedKey    string
+	candidateRemote string
+	confirmedRemote string
 }
 
 func NewCandidateManager(rendezvousRemote string) *CandidateManager {
 	return &CandidateManager{
-		candidates:       make(map[string]*CandidatePair),
-		rendezvousRemote: rendezvousRemote,
+		candidates:      make(map[string]*CandidatePair),
+		candidateRemote: rendezvousRemote,
 	}
 }
 
 func (m *CandidateManager) Observe(localAddr, remoteAddr string) *CandidatePair {
+	return m.observe(localAddr, remoteAddr, CandidatePriority{})
+}
+
+func (m *CandidateManager) observe(localAddr, remoteAddr string, priority CandidatePriority) *CandidatePair {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	key := candidateKey(localAddr, remoteAddr)
@@ -51,9 +60,14 @@ func (m *CandidateManager) Observe(localAddr, remoteAddr string) *CandidatePair 
 			pair.State = CandidateDiscovered
 			pair.Nominated = false
 			pair.Confirmed = false
+			pair.SucceededAt = time.Time{}
+			pair.SuccessCount = 0
+			pair.Score = 0
+			pair.ScoreReason = ""
 		}
 		pair.LastSeenAt = time.Now()
-		return pair
+		applyCandidatePriority(pair, priority)
+		return cloneCandidatePair(pair)
 	}
 	now := time.Now()
 	pair := &CandidatePair{
@@ -63,35 +77,60 @@ func (m *CandidateManager) Observe(localAddr, remoteAddr string) *CandidatePair 
 		FirstSeenAt: now,
 		LastSeenAt:  now,
 	}
+	applyCandidatePriority(pair, priority)
 	m.candidates[key] = pair
 	if m.confirmedRemote == "" || m.confirmedRemote == remoteAddr {
 		m.candidateRemote = remoteAddr
 	}
-	return pair
+	return cloneCandidatePair(pair)
 }
 
 func (m *CandidateManager) MarkSucceeded(localAddr, remoteAddr string) *CandidatePair {
+	return m.MarkSucceededWithPriority(localAddr, remoteAddr, CandidatePriority{})
+}
+
+func (m *CandidateManager) MarkSucceededWithPriority(localAddr, remoteAddr string, priority CandidatePriority) *CandidatePair {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	pair, ok := m.candidates[candidateKey(localAddr, remoteAddr)]
+	key := candidateKey(localAddr, remoteAddr)
+	pair, ok := m.candidates[key]
 	if !ok {
-		return nil
+		now := time.Now()
+		pair = &CandidatePair{
+			LocalAddr:   localAddr,
+			RemoteAddr:  remoteAddr,
+			State:       CandidateDiscovered,
+			FirstSeenAt: now,
+			LastSeenAt:  now,
+		}
+		m.candidates[key] = pair
 	}
-	pair.LastSeenAt = time.Now()
+	now := time.Now()
+	pair.LastSeenAt = now
+	applyCandidatePriority(pair, priority)
 	if pair.State == CandidateClosed {
 		if m.confirmedKey == "" {
+			pair.Nominated = false
+			pair.Confirmed = false
 			pair.State = CandidateSucceeded
+			pair.SucceededAt = now
+			pair.SuccessCount = 0
+			pair.SuccessCount++
 			if m.confirmedRemote == "" || m.confirmedRemote == remoteAddr {
 				m.candidateRemote = remoteAddr
 			}
 		}
-		return pair
+		return cloneCandidatePair(pair)
 	}
 	pair.State = CandidateSucceeded
+	if pair.SucceededAt.IsZero() {
+		pair.SucceededAt = now
+	}
+	pair.SuccessCount++
 	if m.confirmedRemote == "" || m.confirmedRemote == remoteAddr {
 		m.candidateRemote = remoteAddr
 	}
-	return pair
+	return cloneCandidatePair(pair)
 }
 
 func (m *CandidateManager) TryNominate(localAddr, remoteAddr string) (*CandidatePair, bool) {
@@ -104,7 +143,7 @@ func (m *CandidateManager) TryNominate(localAddr, remoteAddr string) (*Candidate
 	}
 	pair.LastSeenAt = time.Now()
 	if m.nominatedKey != "" {
-		return pair, false
+		return cloneCandidatePair(pair), false
 	}
 	m.nominatedKey = key
 	pair.State = CandidateNominated
@@ -112,7 +151,83 @@ func (m *CandidateManager) TryNominate(localAddr, remoteAddr string) (*Candidate
 	if m.confirmedRemote == "" || m.confirmedRemote == remoteAddr {
 		m.candidateRemote = remoteAddr
 	}
-	return pair, true
+	return cloneCandidatePair(pair), true
+}
+
+func (m *CandidateManager) AdoptNomination(localAddr, remoteAddr string) (*CandidatePair, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := candidateKey(localAddr, remoteAddr)
+	pair, ok := m.candidates[key]
+	if !ok {
+		now := time.Now()
+		pair = &CandidatePair{
+			LocalAddr:   localAddr,
+			RemoteAddr:  remoteAddr,
+			State:       CandidateDiscovered,
+			FirstSeenAt: now,
+			LastSeenAt:  now,
+		}
+		m.candidates[key] = pair
+	}
+	pair.LastSeenAt = time.Now()
+	if m.confirmedKey != "" && m.confirmedKey != key {
+		return cloneCandidatePair(pair), false
+	}
+	if m.nominatedKey == key {
+		pair.State = CandidateNominated
+		pair.Nominated = true
+		return cloneCandidatePair(pair), true
+	}
+	if m.nominatedKey != "" {
+		if previous := m.candidates[m.nominatedKey]; previous != nil {
+			revertNominatedPair(previous)
+		}
+	}
+	m.nominatedKey = key
+	pair.State = CandidateNominated
+	pair.Nominated = true
+	if m.confirmedRemote == "" || m.confirmedRemote == remoteAddr {
+		m.candidateRemote = remoteAddr
+	}
+	return cloneCandidatePair(pair), true
+}
+
+func (m *CandidateManager) TryNominateBest() (*CandidatePair, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.nominatedKey != "" {
+		return cloneCandidatePair(m.candidates[m.nominatedKey]), false
+	}
+	now := time.Now()
+	bestKey := ""
+	var bestPair *CandidatePair
+	for key, pair := range m.candidates {
+		if pair == nil || pair.Confirmed || pair.State == CandidateClosed {
+			continue
+		}
+		if pair.State != CandidateSucceeded || pair.SuccessCount == 0 {
+			continue
+		}
+		if !pair.NominationCooldownUntil.IsZero() && pair.NominationCooldownUntil.After(now) {
+			continue
+		}
+		if betterCandidateForNomination(pair, bestPair) {
+			bestKey = key
+			bestPair = pair
+		}
+	}
+	if bestPair == nil {
+		return nil, false
+	}
+	bestPair.LastSeenAt = time.Now()
+	bestPair.State = CandidateNominated
+	bestPair.Nominated = true
+	m.nominatedKey = bestKey
+	if m.confirmedRemote == "" || m.confirmedRemote == bestPair.RemoteAddr {
+		m.candidateRemote = bestPair.RemoteAddr
+	}
+	return cloneCandidatePair(bestPair), true
 }
 
 func (m *CandidateManager) Confirm(localAddr, remoteAddr string) *CandidatePair {
@@ -143,7 +258,52 @@ func (m *CandidateManager) Confirm(localAddr, remoteAddr string) *CandidatePair 
 		}
 		otherPair.State = CandidateClosed
 	}
-	return pair
+	return cloneCandidatePair(pair)
+}
+
+func (m *CandidateManager) BackoffNomination(localAddr, remoteAddr string, cooldown time.Duration) *CandidatePair {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := candidateKey(localAddr, remoteAddr)
+	if m.nominatedKey == "" || m.nominatedKey != key || m.confirmedKey != "" {
+		return nil
+	}
+	pair, ok := m.candidates[key]
+	if !ok {
+		m.nominatedKey = ""
+		return nil
+	}
+	pair.LastSeenAt = time.Now()
+	pair.Nominated = false
+	pair.NominationFailures++
+	if cooldown > 0 {
+		pair.NominationCooldownUntil = time.Now().Add(cooldown)
+	}
+	if pair.SuccessCount > 0 {
+		pair.State = CandidateSucceeded
+	} else {
+		pair.State = CandidateDiscovered
+	}
+	m.nominatedKey = ""
+	return cloneCandidatePair(pair)
+}
+
+func (m *CandidateManager) ReleaseNomination(localAddr, remoteAddr string) *CandidatePair {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := candidateKey(localAddr, remoteAddr)
+	if m.nominatedKey == "" || m.nominatedKey != key || m.confirmedKey != "" {
+		return nil
+	}
+	pair, ok := m.candidates[key]
+	if !ok {
+		m.nominatedKey = ""
+		return nil
+	}
+	pair.LastSeenAt = time.Now()
+	revertNominatedPair(pair)
+	m.nominatedKey = ""
+	return cloneCandidatePair(pair)
 }
 
 func (m *CandidateManager) PruneStale(maxAge time.Duration) int {
@@ -220,7 +380,7 @@ func (m *CandidateManager) NominatedPair() *CandidatePair {
 	if m.nominatedKey == "" {
 		return nil
 	}
-	return m.candidates[m.nominatedKey]
+	return cloneCandidatePair(m.candidates[m.nominatedKey])
 }
 
 func (m *CandidateManager) ConfirmedPair() *CandidatePair {
@@ -229,7 +389,7 @@ func (m *CandidateManager) ConfirmedPair() *CandidatePair {
 	if m.confirmedKey == "" {
 		return nil
 	}
-	return m.candidates[m.confirmedKey]
+	return cloneCandidatePair(m.candidates[m.confirmedKey])
 }
 
 func (m *CandidateManager) StateCounts() map[string]int {
@@ -271,4 +431,72 @@ func (m *CandidateManager) StateCounts() map[string]int {
 
 func candidateKey(localAddr, remoteAddr string) string {
 	return localAddr + "->" + remoteAddr
+}
+
+func applyCandidatePriority(pair *CandidatePair, priority CandidatePriority) {
+	if pair == nil {
+		return
+	}
+	if priority.Score > pair.Score {
+		pair.Score = priority.Score
+		pair.ScoreReason = priority.Reason
+		return
+	}
+	if priority.Score == pair.Score && pair.ScoreReason == "" {
+		pair.ScoreReason = priority.Reason
+	}
+}
+
+func revertNominatedPair(pair *CandidatePair) {
+	if pair == nil {
+		return
+	}
+	pair.Nominated = false
+	if pair.SuccessCount > 0 {
+		pair.State = CandidateSucceeded
+	} else {
+		pair.State = CandidateDiscovered
+	}
+}
+
+func betterCandidateForNomination(pair, best *CandidatePair) bool {
+	if pair == nil {
+		return false
+	}
+	if best == nil {
+		return true
+	}
+	if pair.Score != best.Score {
+		return pair.Score > best.Score
+	}
+	if pair.SuccessCount != best.SuccessCount {
+		return pair.SuccessCount > best.SuccessCount
+	}
+	if pair.NominationFailures != best.NominationFailures {
+		return pair.NominationFailures < best.NominationFailures
+	}
+	if !pair.SucceededAt.Equal(best.SucceededAt) {
+		if pair.SucceededAt.IsZero() {
+			return false
+		}
+		if best.SucceededAt.IsZero() {
+			return true
+		}
+		return pair.SucceededAt.Before(best.SucceededAt)
+	}
+	if !pair.FirstSeenAt.Equal(best.FirstSeenAt) {
+		return pair.FirstSeenAt.Before(best.FirstSeenAt)
+	}
+	if pair.LocalAddr != best.LocalAddr {
+		return pair.LocalAddr < best.LocalAddr
+	}
+	return pair.RemoteAddr < best.RemoteAddr
+}
+
+func cloneCandidatePair(pair *CandidatePair) *CandidatePair {
+	if pair == nil {
+		return nil
+	}
+	cloned := *pair
+	return &cloned
 }
