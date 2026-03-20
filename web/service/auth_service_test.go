@@ -100,3 +100,32 @@ func TestDefaultAuthServiceAuthenticateUsesConfigProvider(t *testing.T) {
 		t.Fatalf("Authenticate() returned unexpected identity: %+v", identity)
 	}
 }
+
+func TestAutoAdminIdentity(t *testing.T) {
+	identity, ok := AutoAdminIdentity(&servercfg.Snapshot{
+		Web: servercfg.WebConfig{},
+	})
+	if !ok {
+		t.Fatal("AutoAdminIdentity() should enable implicit admin login when username and password are empty")
+	}
+	if identity == nil {
+		t.Fatal("AutoAdminIdentity() returned nil identity")
+	}
+	if !identity.Authenticated || !identity.IsAdmin {
+		t.Fatalf("AutoAdminIdentity() returned unexpected identity: %+v", identity)
+	}
+	if identity.Username != "admin" {
+		t.Fatalf("AutoAdminIdentity() username = %q, want admin", identity.Username)
+	}
+	if identity.Attributes["login_mode"] != "auto" {
+		t.Fatalf("AutoAdminIdentity() login mode = %q, want auto", identity.Attributes["login_mode"])
+	}
+
+	if disabled, ok := AutoAdminIdentity(&servercfg.Snapshot{
+		Web: servercfg.WebConfig{
+			TOTPSecret: "totp-secret",
+		},
+	}); ok || disabled != nil {
+		t.Fatalf("AutoAdminIdentity() should stay disabled when TOTP is configured, got %+v, %v", disabled, ok)
+	}
+}

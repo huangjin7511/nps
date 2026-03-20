@@ -11,6 +11,14 @@ func currentSessionIdentity(c Context) *webservice.SessionIdentity {
 	return currentSessionIdentityWithResolverAndFallback(c, webservice.DefaultPermissionResolver(), "")
 }
 
+func ApplySessionIdentity(c Context, identity *webservice.SessionIdentity) {
+	applySessionIdentity(c, identity)
+}
+
+func ClearSessionIdentity(c Context) {
+	clearSessionIdentity(c)
+}
+
 func currentSessionIdentityWithResolver(c Context, resolver webservice.PermissionResolver) *webservice.SessionIdentity {
 	return currentSessionIdentityWithResolverAndFallback(c, resolver, "")
 }

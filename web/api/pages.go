@@ -94,7 +94,7 @@ func (a *App) buildLoginPage(c Context, spec PageSpec) (*ui.Page, error) {
 
 	switch spec.Action {
 	case "index":
-		if a.doLogin(c, "", "", "", false) {
+		if c.SessionValue("auth") == true {
 			c.Redirect(302, joinBase(cfg.Web.BaseURL, "/index/index"))
 			return nil, nil
 		}

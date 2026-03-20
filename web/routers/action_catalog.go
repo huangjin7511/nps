@@ -65,6 +65,9 @@ func registerActionRouteGroup(group *gin.RouterGroup, state *State, specs []weba
 
 func actionRouteMiddlewares(state *State, spec webapi.ActionSpec) []gin.HandlerFunc {
 	middlewares := make([]gin.HandlerFunc, 0, 3)
+	if spec.Controller == "login" && (spec.Name == "verify" || spec.Name == "register") {
+		middlewares = append(middlewares, loginBodyLimitMiddleware(state))
+	}
 	if permission := strings.TrimSpace(spec.Permission); permission != "" {
 		middlewares = append(middlewares, permissionMiddleware(state, permission))
 	}
@@ -80,6 +83,46 @@ func actionRouteMiddlewares(state *State, spec webapi.ActionSpec) []gin.HandlerF
 		middlewares = append(middlewares, hostOwnershipMiddleware(state))
 	}
 	return middlewares
+}
+
+func loginBodyLimitMiddleware(state *State) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Request == nil || c.Request.Body == nil {
+			c.Next()
+			return
+		}
+
+		maxBody := int64(0)
+		if state != nil {
+			maxBody = state.LoginPolicy().Settings().MaxLoginBody
+		}
+		if maxBody <= 0 {
+			c.Next()
+			return
+		}
+
+		if c.Request.ContentLength > maxBody {
+			c.AbortWithStatus(http.StatusRequestEntityTooLarge)
+			return
+		}
+
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxBody)
+		contentType := strings.ToLower(strings.TrimSpace(c.GetHeader("Content-Type")))
+		if c.Request.Method == http.MethodPost &&
+			(strings.HasPrefix(contentType, "application/x-www-form-urlencoded") ||
+				strings.HasPrefix(contentType, "multipart/form-data")) {
+			if err := c.Request.ParseForm(); err != nil {
+				if strings.Contains(err.Error(), "http: request body too large") {
+					c.AbortWithStatus(http.StatusRequestEntityTooLarge)
+					return
+				}
+				c.AbortWithStatus(http.StatusBadRequest)
+				return
+			}
+		}
+
+		c.Next()
+	}
 }
 
 func registerActionRoute(group *gin.RouterGroup, method, path string, handlers []gin.HandlerFunc) {

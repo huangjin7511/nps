@@ -74,6 +74,13 @@ func (s *State) System() webservice.SystemService {
 	return webservice.DefaultSystemService{}
 }
 
+func (s *State) LoginPolicy() webservice.LoginPolicyService {
+	if s != nil && s.App != nil && s.App.Services.LoginPolicy != nil {
+		return s.App.Services.LoginPolicy
+	}
+	return webservice.SharedLoginPolicy()
+}
+
 func (s *State) AvailablePageSpecs(specs []webapi.PageSpec) []webapi.PageSpec {
 	return webapi.AvailablePageSpecs(s.CurrentConfig(), specs)
 }

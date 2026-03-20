@@ -27,12 +27,8 @@ func Init() http.Handler {
 	engine.RedirectFixedPath = false
 	engine.HandleMethodNotAllowed = false
 	engine.Use(gin.Recovery())
-	engine.NoRoute(func(c *gin.Context) {
-		c.AbortWithStatus(http.StatusNotFound)
-	})
-	engine.NoMethod(func(c *gin.Context) {
-		c.AbortWithStatus(http.StatusNotFound)
-	})
+	engine.NoRoute(unknownRouteHandler(cfg.Web.CloseOnNotFound))
+	engine.NoMethod(unknownRouteHandler(cfg.Web.CloseOnNotFound))
 
 	engine.Static(joinBase(cfg.Web.BaseURL, "/static"), filepath.Join(common.GetRunPath(), "web", "static"))
 
@@ -47,9 +43,42 @@ func Init() http.Handler {
 	protected := group.Group("")
 	protected.Use(protectedRouteMiddleware(state))
 	registerProtectedRoutes(protected, state)
+	if basePath != "" {
+		protected.GET("", redirectToManagementShell(state))
+	}
 	protected.GET("/", redirectToManagementShell(state))
 
 	return engine
+}
+
+func unknownRouteHandler(closeOnNotFound bool) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if closeOnNotFound && dropConnection(c) {
+			c.Abort()
+			return
+		}
+		c.AbortWithStatus(http.StatusNotFound)
+	}
+}
+
+func dropConnection(c *gin.Context) bool {
+	if c == nil || c.Writer == nil || c.Writer.Written() {
+		return false
+	}
+	unwrapper, ok := c.Writer.(interface{ Unwrap() http.ResponseWriter })
+	if !ok {
+		return false
+	}
+	hijacker, ok := unwrapper.Unwrap().(http.Hijacker)
+	if !ok {
+		return false
+	}
+	conn, _, err := hijacker.Hijack()
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 func registerSessionRoutes(group *gin.RouterGroup, state *State) {

@@ -10,6 +10,8 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -403,6 +405,218 @@ func TestWebBaseURLPrefix(t *testing.T) {
 	}
 	if got := modelResp.Body.String(); !strings.Contains(got, "\"direct_path\":\"/nps/login/index\"") {
 		t.Fatalf("prefixed page model missing direct_path prefix: %s", got)
+	}
+
+	baseResp := httptest.NewRecorder()
+	baseReq := httptest.NewRequest(http.MethodGet, "/nps", nil)
+	handler.ServeHTTP(baseResp, baseReq)
+	if baseResp.Code != http.StatusFound {
+		t.Fatalf("GET /nps status = %d, want 302", baseResp.Code)
+	}
+	if location := baseResp.Header().Get("Location"); location != "/nps/login/index" {
+		t.Fatalf("GET /nps redirect = %q, want /nps/login/index", location)
+	}
+
+	adminCookies := sessionCookiesFromIdentity(t, servercfg.Current(), (&webservice.SessionIdentity{
+		Version:       webservice.SessionIdentityVersion,
+		Authenticated: true,
+		Kind:          "admin",
+		Provider:      "test",
+		SubjectID:     "admin:admin",
+		Username:      "admin",
+		IsAdmin:       true,
+		Roles:         []string{webservice.RoleAdmin},
+	}).Normalize())
+	adminResp := httptest.NewRecorder()
+	adminReq := httptest.NewRequest(http.MethodGet, "/nps", nil)
+	for _, cookie := range adminCookies {
+		adminReq.AddCookie(cookie)
+	}
+	handler.ServeHTTP(adminResp, adminReq)
+	if adminResp.Code != http.StatusFound {
+		t.Fatalf("GET /nps as admin status = %d, want 302", adminResp.Code)
+	}
+	if location := adminResp.Header().Get("Location"); location != "/nps/app" {
+		t.Fatalf("GET /nps as admin redirect = %q, want /nps/app", location)
+	}
+}
+
+func TestInvalidSessionCookieFallsBackToFreshSession(t *testing.T) {
+	repoRoot := testRepoRoot(t)
+	oldConfPath := common.ConfPath
+	common.ConfPath = repoRoot
+	defer func() {
+		common.ConfPath = oldConfPath
+	}()
+
+	configPath := writeTestConfig(t, "nps.conf", strings.Join([]string{
+		"web_username=admin",
+		"web_password=secret",
+		"web_base_url=",
+		"open_captcha=false",
+	}, "\n")+"\n")
+	if err := servercfg.Load(configPath); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	crypt.InitTls(tls.Certificate{})
+	gin.SetMode(gin.TestMode)
+	handler := Init()
+
+	resp := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/login/index", nil)
+	req.AddCookie(&http.Cookie{Name: "nps_session", Value: "invalid-session-cookie"})
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("GET /login/index with invalid session cookie status = %d, want 200", resp.Code)
+	}
+	if got := resp.Body.String(); !strings.Contains(got, "loginNonce") {
+		t.Fatalf("GET /login/index with invalid session cookie should render login page, got %q", got)
+	}
+	if cookieByName(resp.Result().Cookies(), "nps_session") == nil {
+		t.Fatal("GET /login/index with invalid session cookie should issue a fresh session cookie")
+	}
+}
+
+func TestBlankAdminCredentialsAutoLogin(t *testing.T) {
+	repoRoot := testRepoRoot(t)
+	oldConfPath := common.ConfPath
+	common.ConfPath = repoRoot
+	defer func() {
+		common.ConfPath = oldConfPath
+	}()
+
+	configPath := writeTestConfig(t, "nps.conf", strings.Join([]string{
+		"web_username=",
+		"web_password=",
+		"web_base_url=",
+		"open_captcha=false",
+	}, "\n")+"\n")
+	if err := servercfg.Load(configPath); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	crypt.InitTls(tls.Certificate{})
+	gin.SetMode(gin.TestMode)
+	handler := Init()
+
+	loginResp := httptest.NewRecorder()
+	loginReq := httptest.NewRequest(http.MethodGet, "/login/index", nil)
+	handler.ServeHTTP(loginResp, loginReq)
+	if loginResp.Code != http.StatusFound {
+		t.Fatalf("GET /login/index with blank admin credentials status = %d, want 302", loginResp.Code)
+	}
+	if location := loginResp.Header().Get("Location"); location != "/index/index" {
+		t.Fatalf("GET /login/index redirect = %q, want /index/index", location)
+	}
+
+	bootstrapResp := httptest.NewRecorder()
+	bootstrapReq := httptest.NewRequest(http.MethodGet, "/api/v1/auth/bootstrap", nil)
+	handler.ServeHTTP(bootstrapResp, bootstrapReq)
+	if bootstrapResp.Code != http.StatusOK {
+		t.Fatalf("GET /api/v1/auth/bootstrap with blank admin credentials status = %d, want 200", bootstrapResp.Code)
+	}
+	body := bootstrapResp.Body.String()
+	if !strings.Contains(body, "\"authenticated\":true") || !strings.Contains(body, "\"is_admin\":true") {
+		t.Fatalf("GET /api/v1/auth/bootstrap should expose authenticated admin session, got %s", body)
+	}
+}
+
+func TestLoginVerifyRejectsOversizedChunkedBody(t *testing.T) {
+	repoRoot := testRepoRoot(t)
+	oldConfPath := common.ConfPath
+	common.ConfPath = repoRoot
+	defer func() {
+		common.ConfPath = oldConfPath
+	}()
+
+	configPath := writeTestConfig(t, "nps.conf", strings.Join([]string{
+		"web_username=admin",
+		"web_password=secret",
+		"web_base_url=",
+		"open_captcha=false",
+		"login_max_body=32",
+	}, "\n")+"\n")
+	if err := servercfg.Load(configPath); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	crypt.InitTls(tls.Certificate{})
+	gin.SetMode(gin.TestMode)
+	handler := Init()
+
+	body := "username=admin&password=" + strings.Repeat("x", 128)
+	req := httptest.NewRequest(http.MethodPost, "/login/verify", io.NopCloser(strings.NewReader(body)))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.ContentLength = -1
+	req.TransferEncoding = []string{"chunked"}
+	resp := httptest.NewRecorder()
+	handler.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("POST /login/verify with oversized chunked body status = %d, want 413", resp.Code)
+	}
+}
+
+func TestCloseUnknownPathWithoutResponseWhenEnabled(t *testing.T) {
+	repoRoot := testRepoRoot(t)
+	oldConfPath := common.ConfPath
+	common.ConfPath = repoRoot
+	defer func() {
+		common.ConfPath = oldConfPath
+	}()
+
+	configPath := writeTestConfig(t, "nps.conf", strings.Join([]string{
+		"web_username=admin",
+		"web_password=secret",
+		"web_base_url=",
+		"web_close_on_not_found=true",
+		"open_captcha=false",
+	}, "\n")+"\n")
+	if err := servercfg.Load(configPath); err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	crypt.InitTls(tls.Certificate{})
+	gin.SetMode(gin.TestMode)
+	ts := httptest.NewServer(Init())
+	defer ts.Close()
+
+	addr := strings.TrimPrefix(ts.URL, "http://")
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("Dial() error = %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	if err := conn.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("SetDeadline() error = %v", err)
+	}
+	if _, err := fmt.Fprintf(conn, "GET /definitely-missing HTTP/1.1\r\nHost: %s\r\nConnection: close\r\n\r\n", addr); err != nil {
+		t.Fatalf("write raw request error = %v", err)
+	}
+	raw, err := io.ReadAll(conn)
+	if err != nil {
+		t.Fatalf("ReadAll() error = %v", err)
+	}
+	if len(raw) != 0 {
+		t.Fatalf("unknown path should close without HTTP response, got %q", string(raw))
+	}
+
+	client := ts.Client()
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	resp, err := client.Get(ts.URL + "/")
+	if err != nil {
+		t.Fatalf("GET / error = %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("GET / status = %d, want 302", resp.StatusCode)
+	}
+	if location := resp.Header.Get("Location"); location != "/login/index" {
+		t.Fatalf("GET / redirect = %q, want /login/index", location)
 	}
 }
 

@@ -44,17 +44,18 @@ type LogConfig struct {
 }
 
 type WebConfig struct {
-	BaseURL        string
-	HeadCustomCode string
-	Host           string
-	IP             string
-	Port           int
-	OpenSSL        bool
-	KeyFile        string
-	CertFile       string
-	Username       string
-	Password       string
-	TOTPSecret     string
+	BaseURL         string
+	HeadCustomCode  string
+	Host            string
+	IP              string
+	Port            int
+	OpenSSL         bool
+	CloseOnNotFound bool
+	KeyFile         string
+	CertFile        string
+	Username        string
+	Password        string
+	TOTPSecret      string
 }
 
 type AuthConfig struct {
@@ -272,17 +273,18 @@ func buildSnapshot(values map[string]any) *Snapshot {
 	}
 
 	cfg.Web = WebConfig{
-		BaseURL:        r.stringValue("web_base_url"),
-		HeadCustomCode: r.stringValue("head_custom_code"),
-		Host:           r.stringValue("web_host"),
-		IP:             r.stringDefault("0.0.0.0", "web_ip"),
-		Port:           r.intDefault(0, "web_port"),
-		OpenSSL:        r.boolDefault(false, "web_open_ssl"),
-		KeyFile:        r.stringValue("web_key_file"),
-		CertFile:       r.stringValue("web_cert_file"),
-		Username:       r.stringValue("web_username"),
-		Password:       r.stringValue("web_password"),
-		TOTPSecret:     r.stringValue("totp_secret"),
+		BaseURL:         r.stringValue("web_base_url"),
+		HeadCustomCode:  r.stringValue("head_custom_code"),
+		Host:            r.stringValue("web_host"),
+		IP:              r.stringDefault("0.0.0.0", "web_ip"),
+		Port:            r.intDefault(0, "web_port"),
+		OpenSSL:         r.boolDefault(false, "web_open_ssl"),
+		CloseOnNotFound: r.boolDefault(false, "web_close_on_not_found"),
+		KeyFile:         r.stringValue("web_key_file"),
+		CertFile:        r.stringValue("web_cert_file"),
+		Username:        r.stringValue("web_username"),
+		Password:        r.stringValue("web_password"),
+		TOTPSecret:      r.stringValue("totp_secret"),
 	}
 
 	cfg.Auth = AuthConfig{

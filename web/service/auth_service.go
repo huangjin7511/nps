@@ -178,29 +178,16 @@ func ParseSessionIdentityWithResolver(raw string, resolver PermissionResolver) (
 }
 
 func authenticateAdmin(username, password, totp string, cfg *servercfg.Snapshot) (*SessionIdentity, bool) {
+	if identity, ok := AutoAdminIdentity(cfg); ok && strings.TrimSpace(username) == "" && password == "" && strings.TrimSpace(totp) == "" {
+		return identity, true
+	}
 	if username != strings.TrimSpace(cfg.Web.Username) {
 		return nil, false
 	}
 	if !adminCredentialsMatch(password, totp, cfg) {
 		return nil, false
 	}
-	resolvedUsername := strings.TrimSpace(cfg.Web.Username)
-	if resolvedUsername == "" {
-		resolvedUsername = "admin"
-	}
-	return (&SessionIdentity{
-		Version:       SessionIdentityVersion,
-		Authenticated: true,
-		Kind:          "admin",
-		Provider:      "local",
-		SubjectID:     "admin:" + resolvedUsername,
-		Username:      resolvedUsername,
-		IsAdmin:       true,
-		Roles:         []string{RoleAdmin},
-		Attributes: map[string]string{
-			"login_mode": "password",
-		},
-	}), true
+	return newAdminIdentity(cfg, "password"), true
 }
 
 func adminCredentialsMatch(password, totp string, cfg *servercfg.Snapshot) bool {
@@ -226,6 +213,42 @@ func adminCredentialsMatch(password, totp string, cfg *servercfg.Snapshot) bool 
 		}
 	}
 	return password == expectedPassword
+}
+
+func AutoAdminIdentity(cfg *servercfg.Snapshot) (*SessionIdentity, bool) {
+	if !adminAutoLoginEnabled(cfg) {
+		return nil, false
+	}
+	return newAdminIdentity(cfg, "auto").Normalize(), true
+}
+
+func adminAutoLoginEnabled(cfg *servercfg.Snapshot) bool {
+	if cfg == nil {
+		return false
+	}
+	return strings.TrimSpace(cfg.Web.Username) == "" &&
+		cfg.Web.Password == "" &&
+		strings.TrimSpace(cfg.Web.TOTPSecret) == ""
+}
+
+func newAdminIdentity(cfg *servercfg.Snapshot, loginMode string) *SessionIdentity {
+	resolvedUsername := "admin"
+	if cfg != nil && strings.TrimSpace(cfg.Web.Username) != "" {
+		resolvedUsername = strings.TrimSpace(cfg.Web.Username)
+	}
+	return &SessionIdentity{
+		Version:       SessionIdentityVersion,
+		Authenticated: true,
+		Kind:          "admin",
+		Provider:      "local",
+		SubjectID:     "admin:" + resolvedUsername,
+		Username:      resolvedUsername,
+		IsAdmin:       true,
+		Roles:         []string{RoleAdmin},
+		Attributes: map[string]string{
+			"login_mode": loginMode,
+		},
+	}
 }
 
 func clientCredentialsMatch(client *file.Client, password, totp string) bool {

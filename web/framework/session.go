@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"sync"
 
+	"github.com/djylb/nps/lib/logs"
 	"github.com/djylb/nps/lib/servercfg"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/sessions"
@@ -66,7 +67,9 @@ func newSessionState(w http.ResponseWriter, r *http.Request, cfg *servercfg.Snap
 
 	session, err := store.Get(r, sessionName)
 	if err != nil {
-		return nil, err
+		logs.Warn("Invalid web session cookie, resetting session: %v", err)
+		_ = clearSessionCookie(store, w, r)
+		session = newBlankSession(store)
 	}
 	return &sessionState{
 		store:   store,
@@ -164,6 +167,22 @@ func buildSessionStore(cfg *servercfg.Snapshot) (*sessions.CookieStore, error) {
 		SameSite: http.SameSiteLaxMode,
 	}
 	return store, nil
+}
+
+func clearSessionCookie(store *sessions.CookieStore, w http.ResponseWriter, r *http.Request) error {
+	session := newBlankSession(store)
+	session.Options.MaxAge = -1
+	return session.Save(r, w)
+}
+
+func newBlankSession(store *sessions.CookieStore) *sessions.Session {
+	session := sessions.NewSession(store, sessionName)
+	if store != nil && store.Options != nil {
+		options := *store.Options
+		session.Options = &options
+	}
+	session.IsNew = true
+	return session
 }
 
 func deriveSessionKeys(cfg *servercfg.Snapshot) ([]byte, []byte, error) {

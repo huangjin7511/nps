@@ -60,9 +60,22 @@ func apiInputMiddleware() gin.HandlerFunc {
 func requestContextMiddleware(state *State) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		attachRequestMetadata(c, state.App)
+		ensureAutoAdminSession(c, state)
 		setActor(c, actorFromSession(c, state.PermissionResolver(), state.AdminUsername()))
 		c.Next()
 	}
+}
+
+func ensureAutoAdminSession(c *gin.Context, state *State) {
+	if framework.SessionValue(c, "auth") == true {
+		return
+	}
+	identity, ok := webservice.AutoAdminIdentity(state.CurrentConfig())
+	if !ok {
+		return
+	}
+	webapi.ApplySessionIdentity(newAPIContext(c), identity)
+	state.System().RegisterManagementAccess(c.ClientIP())
 }
 
 func protectedRouteMiddleware(state *State) gin.HandlerFunc {
