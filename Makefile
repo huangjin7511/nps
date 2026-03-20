@@ -1,75 +1,80 @@
-SOURCE_FILES?=./...
-TEST_PATTERN?=.
-TEST_OPTIONS?=
+GO ?= go
+DIST_DIR ?= dist
+BIN_DIR ?= $(DIST_DIR)/bin
+CGO_ENABLED ?= 0
+LDFLAGS ?= -s -w
+TARGETS ?=
+CLIENT_TARGETS ?=
+SERVER_TARGETS ?=
 
-export PATH := ./bin:$(PATH)
-export GO111MODULE := on
-export GOPROXY := https://goproxy.io
+LOCAL_OS := $(shell $(GO) env GOOS)
+EXE :=
 
-# Build a beta version of goreleaser
-build:
-	go build cmd/nps/nps.go
-	go build cmd/npc/npc.go
-.PHONY: build
+ifeq ($(LOCAL_OS),windows)
+EXE := .exe
+endif
 
-# Install all the build and lint dependencies
-setup:
-	curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh
-	curl -L https://git.io/misspell | sh
-	go mod download
-.PHONY: setup
+ifeq ($(OS),Windows_NT)
+BASH := "C:\Program Files\Git\bin\bash.exe"
+MKDIR_BIN_CMD = if not exist "$(subst /,\,$(BIN_DIR))" mkdir "$(subst /,\,$(BIN_DIR))"
+CLEAN_DIST_CMD = if exist "$(subst /,\,$(DIST_DIR))" rmdir /s /q "$(subst /,\,$(DIST_DIR))"
+BUILD_CLIENT_CMD = set "CGO_ENABLED=$(CGO_ENABLED)" && $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/npc$(EXE) ./cmd/npc
+BUILD_SERVER_CMD = set "CGO_ENABLED=$(CGO_ENABLED)" && $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/nps$(EXE) ./cmd/nps
+RELEASE_ALL_CMD = set "DIST_DIR=$(DIST_DIR)" && set "TARGETS=$(TARGETS)" && set "CLIENT_TARGETS=$(CLIENT_TARGETS)" && set "SERVER_TARGETS=$(SERVER_TARGETS)" && set "LDFLAGS=$(LDFLAGS)" && $(BASH) -lc "./build.sh all"
+RELEASE_CLIENT_CMD = set "DIST_DIR=$(DIST_DIR)" && set "TARGETS=$(TARGETS)" && set "CLIENT_TARGETS=$(CLIENT_TARGETS)" && set "SERVER_TARGETS=$(SERVER_TARGETS)" && set "LDFLAGS=$(LDFLAGS)" && $(BASH) -lc "./build.sh client"
+RELEASE_SERVER_CMD = set "DIST_DIR=$(DIST_DIR)" && set "TARGETS=$(TARGETS)" && set "CLIENT_TARGETS=$(CLIENT_TARGETS)" && set "SERVER_TARGETS=$(SERVER_TARGETS)" && set "LDFLAGS=$(LDFLAGS)" && $(BASH) -lc "./build.sh server"
+else
+BASH := bash
+MKDIR_BIN_CMD = mkdir -p "$(BIN_DIR)"
+CLEAN_DIST_CMD = rm -rf "$(DIST_DIR)"
+BUILD_CLIENT_CMD = CGO_ENABLED=$(CGO_ENABLED) $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/npc$(EXE) ./cmd/npc
+BUILD_SERVER_CMD = CGO_ENABLED=$(CGO_ENABLED) $(GO) build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN_DIR)/nps$(EXE) ./cmd/nps
+RELEASE_ALL_CMD = DIST_DIR="$(DIST_DIR)" TARGETS="$(TARGETS)" CLIENT_TARGETS="$(CLIENT_TARGETS)" SERVER_TARGETS="$(SERVER_TARGETS)" LDFLAGS="$(LDFLAGS)" $(BASH) ./build.sh all
+RELEASE_CLIENT_CMD = DIST_DIR="$(DIST_DIR)" TARGETS="$(TARGETS)" CLIENT_TARGETS="$(CLIENT_TARGETS)" SERVER_TARGETS="$(SERVER_TARGETS)" LDFLAGS="$(LDFLAGS)" $(BASH) ./build.sh client
+RELEASE_SERVER_CMD = DIST_DIR="$(DIST_DIR)" TARGETS="$(TARGETS)" CLIENT_TARGETS="$(CLIENT_TARGETS)" SERVER_TARGETS="$(SERVER_TARGETS)" LDFLAGS="$(LDFLAGS)" $(BASH) ./build.sh server
+endif
 
-# Run all the tests
+.PHONY: help build build-client build-server test fmt release release-client release-server package ci clean
+
+help:
+	@echo "make build          Build npc and nps for the current host into $(BIN_DIR)"
+	@echo "make test           Run go test ./..."
+	@echo "make fmt            Run go fmt ./..."
+	@echo "make release        Build common release archives into $(DIST_DIR)/release"
+	@echo "make release-client Build client release archives only"
+	@echo "make release-server Build server release archives only"
+	@echo "make clean          Remove $(DIST_DIR)"
+
+build: build-client build-server
+
+build-client:
+	@$(MKDIR_BIN_CMD)
+	@$(BUILD_CLIENT_CMD)
+
+build-server:
+	@$(MKDIR_BIN_CMD)
+	@$(BUILD_SERVER_CMD)
+
 test:
-	go test $(TEST_OPTIONS) -failfast -race -coverpkg=./... -covermode=atomic -coverprofile=coverage.txt $(SOURCE_FILES) -run $(TEST_PATTERN) -timeout=2m
-.PHONY: test
+	$(GO) test ./...
 
-# Run all the tests and opens the coverage report
-cover: test
-	go tool cover -html=coverage.txt
-.PHONY: cover
-
-# gofmt and goimports all go files
 fmt:
-	find . -name '*.go' -not -wholename './vendor/*' | while read -r file; do gofmt -w -s "$$file"; goimports -w "$$file"; done
-.PHONY: fmt
+	$(GO) fmt ./...
 
-# Run all the linters
-lint:
-	# TODO: fix tests and lll issues
-	./bin/golangci-lint run --tests=false --enable-all --disable=lll ./...
-	./bin/misspell -error **/*
-.PHONY: lint
+release:
+	@$(RELEASE_ALL_CMD)
 
-# Clean go.mod
-go-mod-tidy:
-	@go mod tidy -v
-	@git diff HEAD
-	@git diff-index --quiet HEAD
-.PHONY: go-mod-tidy
+release-client:
+	@$(RELEASE_CLIENT_CMD)
 
-# Run all the tests and code checks
-ci: build test lint go-mod-tidy
-.PHONY: ci
+release-server:
+	@$(RELEASE_SERVER_CMD)
 
-# Generate the static documentation
-static:
-	@hugo --enableGitInfo --source www
-.PHONY: static
+package: release
 
-# Show to-do items per file.
-todo:
-	@grep \
-		--exclude-dir=vendor \
-		--exclude-dir=node_modules \
-		--exclude=Makefile \
-		--text \
-		--color \
-		-nRo -E ' TODO:.*|SkipNow' .
-.PHONY: todo
+ci: test build
 
 clean:
-	rm npc nps
-.PHONY: clean
+	@$(CLEAN_DIST_CMD)
 
 .DEFAULT_GOAL := build
