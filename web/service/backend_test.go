@@ -84,8 +84,8 @@ func (stubRepository) ClientOwnsHost(int, int) bool        { return false }
 
 type stubRuntime struct {
 	dashboardData func(bool) map[string]interface{}
-	generatePort  func(string) int
-	portAvailable func(int, string) bool
+	generatePort  func(*file.Tunnel) int
+	portAvailable func(*file.Tunnel) bool
 }
 
 func (s stubRuntime) DashboardData(force bool) map[string]interface{} {
@@ -101,15 +101,15 @@ func (stubRuntime) ListClients(int, int, string, string, string, int) ([]*file.C
 func (stubRuntime) PingClient(int, string) int { return 0 }
 func (stubRuntime) DisconnectClient(int)       {}
 func (stubRuntime) DeleteClientResources(int)  {}
-func (s stubRuntime) GenerateTunnelPort(mode string) int {
+func (s stubRuntime) GenerateTunnelPort(tunnel *file.Tunnel) int {
 	if s.generatePort != nil {
-		return s.generatePort(mode)
+		return s.generatePort(tunnel)
 	}
 	return 0
 }
-func (s stubRuntime) TunnelPortAvailable(port int, mode string) bool {
+func (s stubRuntime) TunnelPortAvailable(tunnel *file.Tunnel) bool {
 	if s.portAvailable != nil {
-		return s.portAvailable(port, mode)
+		return s.portAvailable(tunnel)
 	}
 	return true
 }
@@ -194,14 +194,14 @@ func TestDefaultIndexServiceAddTunnelUsesInjectedRuntimePortPolicy(t *testing.T)
 				},
 			},
 			Runtime: stubRuntime{
-				generatePort: func(mode string) int {
-					if mode != "tcp" {
-						t.Fatalf("GenerateTunnelPort() mode = %q, want tcp", mode)
+				generatePort: func(tunnel *file.Tunnel) int {
+					if tunnel == nil || tunnel.Mode != "tcp" {
+						t.Fatalf("GenerateTunnelPort() tunnel = %#v, want tcp tunnel", tunnel)
 					}
 					return 18080
 				},
-				portAvailable: func(port int, mode string) bool {
-					return port == 18080 && mode == "tcp"
+				portAvailable: func(tunnel *file.Tunnel) bool {
+					return tunnel != nil && tunnel.Port == 18080 && tunnel.Mode == "tcp"
 				},
 			},
 		},

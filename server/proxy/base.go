@@ -14,6 +14,8 @@ import (
 	"github.com/djylb/nps/lib/logs"
 )
 
+var errProxyAccessDenied = errors.New("proxy access denied")
+
 type Service interface {
 	Start() error
 	Close() error
@@ -104,34 +106,47 @@ func in(target string, strArray []string) bool {
 
 func (s *BaseServer) DealClient(c *conn.Conn, client *file.Client, addr string,
 	rb []byte, tp string, f func(), flows []*file.Flow, proxyProtocol int, localProxy bool, task *file.Tunnel) error {
-
-	if IsGlobalBlackIp(c.RemoteAddr().String()) || common.IsBlackIp(c.RemoteAddr().String(), client.VerifyKey, client.BlackIpList) {
-		_ = c.Close()
-		return nil
-	}
-	if task != nil && task.Mode == "mixProxy" && task.DestAclMode != file.AclOff {
-		if !task.AllowsDestination(addr) {
-			logs.Warn("mixProxy dest acl deny: client=%d task=%d dest=%s",
-				client.Id, task.Id, common.ExtractHost(addr))
-			_ = c.Close()
-			return errors.New("destination denied by dest acl")
-		}
-	}
-	isLocal := s.AllowLocalProxy && localProxy || client.Id < 0
-	link := conn.NewLink(tp, addr, client.Cnf.Crypt, client.Cnf.Compress, c.Conn.RemoteAddr().String(), isLocal)
-	target, err := s.Bridge.SendLinkInfo(client.Id, link, s.Task)
+	target, link, isLocal, err := s.openClientLink(c, client, addr, tp, localProxy, task)
 	if err != nil {
-		logs.Warn("get connection from client Id %d  error %v", client.Id, err)
 		_ = c.Close()
 		return err
+	}
+	if target == nil || link == nil {
+		_ = c.Close()
+		return nil
 	}
 
 	if f != nil {
 		f()
 	}
+	s.pipeClientConn(target, c, link, client, flows, proxyProtocol, rb, task, isLocal, tp)
+	return nil
+}
+
+func (s *BaseServer) openClientLink(c *conn.Conn, client *file.Client, addr, tp string, localProxy bool, task *file.Tunnel) (net.Conn, *conn.Link, bool, error) {
+	if IsGlobalBlackIp(c.RemoteAddr().String()) || common.IsBlackIp(c.RemoteAddr().String(), client.VerifyKey, client.BlackIpList) {
+		return nil, nil, false, errProxyAccessDenied
+	}
+	if task != nil && task.Mode == "mixProxy" && task.DestAclMode != file.AclOff {
+		if !task.AllowsDestination(addr) {
+			logs.Warn("mixProxy dest acl deny: client=%d task=%d dest=%s",
+				client.Id, task.Id, common.ExtractHost(addr))
+			return nil, nil, false, errProxyAccessDenied
+		}
+	}
+	isLocal := s.AllowLocalProxy && localProxy || client.Id < 0
+	link := conn.NewLink(tp, addr, client.Cnf.Crypt, client.Cnf.Compress, c.Conn.RemoteAddr().String(), isLocal)
+	target, err := s.Bridge.SendLinkInfo(client.Id, link, task)
+	if err != nil {
+		logs.Warn("get connection from client Id %d  error %v", client.Id, err)
+		return nil, nil, false, err
+	}
+	return target, link, isLocal, nil
+}
+
+func (s *BaseServer) pipeClientConn(target net.Conn, c *conn.Conn, link *conn.Link, client *file.Client, flows []*file.Flow, proxyProtocol int, rb []byte, task *file.Tunnel, isLocal bool, tp string) {
 	isFramed := tp == common.CONN_UDP
 	conn.CopyWaitGroup(target, c.Conn, link.Crypt, link.Compress, client.Rate, flows, true, proxyProtocol, rb, task, isLocal, isFramed)
-	return nil
 }
 
 func IsGlobalBlackIp(ipPort string) bool {

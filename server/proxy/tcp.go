@@ -23,6 +23,7 @@ type TunnelModeServer struct {
 	process           process
 	address           string
 	listener          net.Listener
+	socks5UDP         *socks5UDPRegistry
 	activeConnections sync.Map
 }
 
@@ -40,7 +41,30 @@ func (s *TunnelModeServer) Start() error {
 		s.Task.ServerIp = "0.0.0.0"
 	}
 	s.address = common.BuildAddress(s.Task.ServerIp, strconv.Itoa(s.Task.Port))
-	return conn.NewTcpListenerAndProcess(s.address, s.handleConn, &s.listener)
+
+	if s.usesSocks5UDP() {
+		registry, err := newSocks5UDPRegistry(s.Bridge, s.Task, s.AllowLocalProxy, s.address)
+		if err != nil {
+			return err
+		}
+		s.socks5UDP = registry
+		s.socks5UDP.start()
+	}
+
+	listener, err := net.Listen("tcp", s.address)
+	if err != nil {
+		if s.socks5UDP != nil {
+			_ = s.socks5UDP.Close()
+			s.socks5UDP = nil
+		}
+		return err
+	}
+	s.listener = listener
+	conn.Accept(listener, s.handleConn)
+	if s.socks5UDP != nil {
+		_ = s.socks5UDP.Close()
+	}
+	return nil
 }
 
 func (s *TunnelModeServer) Close() error {
@@ -51,7 +75,9 @@ func (s *TunnelModeServer) Close() error {
 		}
 		return true
 	})
-	s.activeConnections = sync.Map{}
+	if s.socks5UDP != nil {
+		_ = s.socks5UDP.Close()
+	}
 	if s.listener == nil {
 		return nil
 	}
@@ -101,6 +127,14 @@ func (s *TunnelModeServer) handleConn(c net.Conn) {
 	logs.Trace("new tcp connection,local port %d,client %d,remote address %v", s.Task.Port, s.Task.Client.Id, c.RemoteAddr())
 
 	_ = s.process(conn.NewConn(c), s)
+}
+
+func (s *TunnelModeServer) usesSocks5UDP() bool {
+	if s == nil || s.Task == nil {
+		return false
+	}
+	_, socksEnabled := effectiveMixProxyFlags(s.Task)
+	return socksEnabled
 }
 
 type process func(c *conn.Conn, s *TunnelModeServer) error

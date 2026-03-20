@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/djylb/nps/lib/common"
+	"github.com/djylb/nps/lib/file"
 	"github.com/djylb/nps/lib/servercfg"
 	"github.com/shirou/gopsutil/v4/cpu"
 	"github.com/shirou/gopsutil/v4/load"
@@ -58,6 +59,17 @@ func buildAllowPortSet() {
 }
 
 func TestServerPort(p int, m string) (b bool) {
+	return testPortUsage(p, m, m == "udp")
+}
+
+func TestTunnelPort(t *file.Tunnel) bool {
+	if t == nil {
+		return false
+	}
+	return testPortUsage(t.Port, t.Mode, tunnelNeedsUDP(t))
+}
+
+func testPortUsage(p int, m string, needUDP bool) (b bool) {
 	if m == "p2p" || m == "secret" {
 		return true
 	}
@@ -69,12 +81,28 @@ func TestServerPort(p int, m string) (b bool) {
 			return false
 		}
 	}
-	if m == "udp" {
-		b = common.TestUdpPort(p)
-	} else {
-		b = common.TestTcpPort(p)
+	needTCP := m != "udp"
+	if needTCP && !common.TestTcpPort(p) {
+		return false
 	}
-	return
+	if needUDP && !common.TestUdpPort(p) {
+		return false
+	}
+	return true
+}
+
+func tunnelNeedsUDP(t *file.Tunnel) bool {
+	if t == nil {
+		return false
+	}
+	switch t.Mode {
+	case "udp", "socks5":
+		return true
+	case "mixProxy":
+		return t.Socks5Proxy
+	default:
+		return false
+	}
 }
 
 func GenerateServerPort(m string) int {
@@ -97,6 +125,43 @@ func GenerateServerPort(m string) int {
 		}
 		for p := 1024; p <= 65535; p++ {
 			if TestServerPort(p, m) {
+				return p
+			}
+		}
+	}
+	return 0
+}
+
+func GenerateTunnelPort(t *file.Tunnel) int {
+	if t == nil {
+		return 0
+	}
+	probe := &file.Tunnel{
+		Mode:        t.Mode,
+		Socks5Proxy: t.Socks5Proxy,
+	}
+	if len(ports) > 0 {
+		for _, idx := range rand.Perm(len(ports)) {
+			p := ports[idx]
+			if p == 0 {
+				continue
+			}
+			probe.Port = p
+			if TestTunnelPort(probe) {
+				return p
+			}
+		}
+	} else {
+		for attempt := 0; attempt < 1000; attempt++ {
+			serverPort := rand.Intn(65535-1024+1) + 1024
+			probe.Port = serverPort
+			if TestTunnelPort(probe) {
+				return serverPort
+			}
+		}
+		for p := 1024; p <= 65535; p++ {
+			probe.Port = p
+			if TestTunnelPort(probe) {
 				return p
 			}
 		}

@@ -214,11 +214,9 @@ func (s DefaultIndexService) AddTunnel(input AddTunnelInput) (TunnelMutation, er
 		},
 	}
 
-	port, err := s.resolveTunnelPort(tunnel.Port, tunnel.Mode)
-	if err != nil {
+	if _, err := s.resolveTunnelPort(tunnel); err != nil {
 		return TunnelMutation{}, err
 	}
-	tunnel.Port = port
 
 	client, err := s.repo().GetClient(input.ClientID)
 	if err != nil {
@@ -264,12 +262,19 @@ func (s DefaultIndexService) EditTunnel(input EditTunnelInput) (TunnelMutation, 
 	if desiredMode == "" {
 		desiredMode = tunnel.Mode
 	}
-	if input.Port != tunnel.Port || desiredMode != tunnel.Mode {
-		port, err := s.resolveTunnelPort(input.Port, desiredMode)
-		if err != nil {
+	probe := &file.Tunnel{
+		Port:        input.Port,
+		Mode:        desiredMode,
+		HttpProxy:   input.EnableHTTP,
+		Socks5Proxy: input.EnableSocks5,
+	}
+	if probe.Port <= 0 {
+		probe.Port = tunnel.Port
+	}
+	if probe.Port != tunnel.Port || probe.Mode != tunnel.Mode || probe.Socks5Proxy != tunnel.Socks5Proxy {
+		if _, err := s.resolveTunnelPort(probe); err != nil {
 			return TunnelMutation{}, err
 		}
-		tunnel.Port = port
 	}
 
 	targetFallback := ""
@@ -277,6 +282,7 @@ func (s DefaultIndexService) EditTunnel(input EditTunnelInput) (TunnelMutation, 
 		targetFallback = tunnel.Target.TargetStr
 	}
 
+	tunnel.Port = probe.Port
 	tunnel.ServerIp = input.ServerIP
 	tunnel.Mode = desiredMode
 	tunnel.TargetType = input.TargetType
@@ -583,12 +589,12 @@ func (s DefaultIndexService) runtime() Runtime {
 	return DefaultBackend().Runtime
 }
 
-func (s DefaultIndexService) resolveTunnelPort(port int, mode string) (int, error) {
-	if port <= 0 {
-		port = s.runtime().GenerateTunnelPort(mode)
+func (s DefaultIndexService) resolveTunnelPort(tunnel *file.Tunnel) (int, error) {
+	if tunnel.Port <= 0 {
+		tunnel.Port = s.runtime().GenerateTunnelPort(tunnel)
 	}
-	if !s.runtime().TunnelPortAvailable(port, mode) {
+	if !s.runtime().TunnelPortAvailable(tunnel) {
 		return 0, ErrPortUnavailable
 	}
-	return port, nil
+	return tunnel.Port, nil
 }

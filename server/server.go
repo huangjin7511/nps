@@ -282,7 +282,7 @@ func AddTask(t *file.Tunnel) error {
 		RunList.Store(t.Id, nil)
 		return nil
 	}
-	if b := tool.TestServerPort(t.Port, t.Mode); !b && t.Mode != "httpHostServer" {
+	if b := tool.TestTunnelPort(t); !b && t.Mode != "httpHostServer" {
 		logs.Error("taskId %d start error port %d open failed", t.Id, t.Port)
 		return errors.New("the port open error")
 	}
@@ -312,7 +312,7 @@ func StartTask(id int) error {
 	if t, err := file.GetDb().GetTask(id); err != nil {
 		return err
 	} else {
-		if !tool.TestServerPort(t.Port, t.Mode) {
+		if !tool.TestTunnelPort(t) {
 			return errors.New("the port open error")
 		}
 		err = AddTask(t)

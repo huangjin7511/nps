@@ -1,7 +1,10 @@
 package tool
 
 import (
+	"net"
 	"testing"
+
+	"github.com/djylb/nps/lib/file"
 )
 
 func withPorts(t *testing.T, p []int) {
@@ -164,5 +167,35 @@ func TestGenerateServerPortWithoutAllowListUsesDynamicRange(t *testing.T) {
 	got := GenerateServerPort("p2p")
 	if got < 1024 || got > 65535 {
 		t.Fatalf("GenerateServerPort()=%d, want in [1024, 65535]", got)
+	}
+}
+
+func TestTestTunnelPortChecksUDPForSocks5(t *testing.T) {
+	withPorts(t, nil)
+
+	udpListener, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.IPv4zero, Port: 0})
+	if err != nil {
+		t.Fatalf("ListenUDP() error = %v", err)
+	}
+	defer func() { _ = udpListener.Close() }()
+
+	port := udpListener.LocalAddr().(*net.UDPAddr).Port
+	socksTunnel := &file.Tunnel{Port: port, Mode: "mixProxy", Socks5Proxy: true}
+	if TestTunnelPort(socksTunnel) {
+		t.Fatalf("TestTunnelPort() should reject socks5 tunnel when UDP port %d is occupied", port)
+	}
+
+	httpTunnel := &file.Tunnel{Port: port, Mode: "mixProxy", Socks5Proxy: false}
+	if !TestTunnelPort(httpTunnel) {
+		t.Fatalf("TestTunnelPort() should allow HTTP-only mixProxy when only UDP port %d is occupied", port)
+	}
+}
+
+func TestGenerateTunnelPortUsesTunnelPolicy(t *testing.T) {
+	withPorts(t, []int{0, 10001, 10002})
+
+	got := GenerateTunnelPort(&file.Tunnel{Mode: "mixProxy", Socks5Proxy: true})
+	if got != 10001 && got != 10002 {
+		t.Fatalf("GenerateTunnelPort()=%d, want one of configured non-zero ports", got)
 	}
 }

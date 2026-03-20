@@ -46,8 +46,8 @@ type Runtime interface {
 	PingClient(int, string) int
 	DisconnectClient(int)
 	DeleteClientResources(int)
-	GenerateTunnelPort(string) int
-	TunnelPortAvailable(int, string) bool
+	GenerateTunnelPort(*file.Tunnel) int
+	TunnelPortAvailable(*file.Tunnel) bool
 	ListTunnels(offset, limit int, tunnelType string, clientID int, search, sort, order string) ([]*file.Tunnel, int)
 	AddTunnel(*file.Tunnel) error
 	StopTunnel(int) error
@@ -295,12 +295,12 @@ func (defaultRuntime) DeleteClientResources(id int) {
 	server.DelTunnelAndHostByClientId(id, false)
 }
 
-func (defaultRuntime) GenerateTunnelPort(mode string) int {
-	return tool.GenerateServerPort(mode)
+func (defaultRuntime) GenerateTunnelPort(tunnel *file.Tunnel) int {
+	return tool.GenerateTunnelPort(tunnel)
 }
 
-func (defaultRuntime) TunnelPortAvailable(port int, mode string) bool {
-	return tool.TestServerPort(port, mode)
+func (defaultRuntime) TunnelPortAvailable(tunnel *file.Tunnel) bool {
+	return tool.TestTunnelPort(tunnel)
 }
 
 func (defaultRuntime) ListTunnels(offset, limit int, tunnelType string, clientID int, search, sort, order string) ([]*file.Tunnel, int) {

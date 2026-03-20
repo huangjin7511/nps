@@ -202,7 +202,7 @@ loop:
 						break loop
 					}
 
-					if b := tool.TestServerPort(tl.Port, tl.Mode); !b && t.Mode != "secret" && t.Mode != "p2p" && tl.Port > 0 {
+					if b := tool.TestTunnelPort(tl); !b && t.Mode != "secret" && t.Mode != "p2p" && tl.Port > 0 {
 						fail = true
 						_ = c.WriteAddFail()
 						break loop
