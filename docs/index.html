@@ -8,12 +8,89 @@
     <meta content="width=device-width, user-scalable=no, initial-scale=1.0, maximum-scale=1.0, minimum-scale=1.0"
           name="viewport">
     <link href="//cdn.jsdelivr.net/npm/docsify/lib/themes/vue.css" rel="stylesheet">
+    <style>
+        .sidebar-nav li ul {
+            display: none;
+        }
+
+        .sidebar-nav li.sidebar-open > ul {
+            display: block;
+        }
+
+        .sidebar-nav li.sidebar-branch > a {
+            padding-right: 1.2rem;
+            position: relative;
+        }
+
+        .sidebar-nav li.sidebar-branch > a::after {
+            content: "›";
+            font-size: 1rem;
+            line-height: 1;
+            opacity: .5;
+            position: absolute;
+            right: .15rem;
+            top: .35rem;
+            transition: transform .15s ease;
+        }
+
+        .sidebar-nav li.sidebar-branch.sidebar-open > a::after {
+            transform: rotate(90deg);
+        }
+
+        .sidebar-nav li.sidebar-current > a {
+            color: var(--theme-color, #42b983);
+            font-weight: 600;
+        }
+    </style>
 </head>
 <body>
 <div id="app"></div>
 <script src="//cdn.jsdelivr.net/npm/docsify-edit-on-github/index.js"></script>
 
 <script>
+    function updateSidebarState() {
+        var sidebar = document.querySelector('.sidebar-nav');
+        if (!sidebar) {
+            return;
+        }
+
+        sidebar.querySelectorAll('li').forEach(function (item) {
+            var hasChildList = Array.prototype.some.call(item.children, function (child) {
+                return child.tagName === 'UL';
+            });
+            item.classList.toggle('sidebar-branch', hasChildList);
+            item.classList.remove('sidebar-open', 'sidebar-current');
+        });
+
+        var activeLink = sidebar.querySelector('a.active');
+        if (!activeLink) {
+            return;
+        }
+
+        var currentItem = activeLink.closest('li');
+        if (currentItem) {
+            currentItem.classList.add('sidebar-current');
+            if (currentItem.classList.contains('sidebar-branch')) {
+                currentItem.classList.add('sidebar-open');
+            }
+        }
+
+        var parent = currentItem && currentItem.parentElement;
+        while (parent && parent !== sidebar) {
+            var branch = parent.closest('li.sidebar-branch');
+            if (!branch) {
+                break;
+            }
+            branch.classList.add('sidebar-open');
+            parent = branch.parentElement;
+        }
+    }
+
+    function compactSidebarPlugin(hook) {
+        hook.doneEach(function () {
+            requestAnimationFrame(updateSidebarState);
+        });
+    }
 
     window.$docsify = {
         name: 'NPS',
@@ -37,6 +114,7 @@
             hideOtherSidebarContent: true,
         },
         plugins: [
+            compactSidebarPlugin,
             EditOnGithubPlugin.create("https://github.com/djylb/nps/tree/master/docs/", "", "在 GitHub 上编辑"),
         ]
 
