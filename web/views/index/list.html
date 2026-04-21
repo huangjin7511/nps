@@ -1,9 +1,10 @@
 <div class="wrapper wrapper-content animated fadeInRight">
     <div class="row">
         <div class="col-lg-12">
-            <div class="ibox float-e-margins">
+            <div class="ibox float-e-margins nps-list-shell">
                 <div class="ibox-title">
-                    <h5><span id="langtag"></span><span></span></h5>
+                    <h5 class="nps-list-title"><span id="langtag"></span><span></span></h5>
+                    <p class="nps-list-subtitle" langtag="info-tunnel-list-subtitle"></p>
                     <div class="ibox-tools">
                         <a class="collapse-link">
                             <i class="fa fa-chevron-up"></i>
@@ -16,12 +17,51 @@
                 <div class="content">
                     <div class="table-responsive">
                         <div id="toolbar">
-                            {{ if or (not .type) (ne .type "file") }}
-                            <a class="btn btn-primary dim" href="{{.web_base_url}}/index/add?type={{.type}}&client_id={{.client_id}}">
-                                <i class="fa fa-fw fa-lg fa-plus"></i>
-                                <span langtag="word-add"></span>
-                            </a>
-                            {{ end }}
+                            <div class="d-flex w-100 flex-wrap align-items-center">
+                                <a class="btn btn-primary mr-2"
+                                   id="tunnel-add-link"
+                                   href="{{.web_base_url}}/index/add"
+                                   data-nps-page-controller="index"
+                                   data-nps-page-action="add"
+                                   data-nps-require-page-controller="index"
+                                   data-nps-require-page-action="add"
+                                   data-nps-require-node-action="tunnels/add">
+                                    <i class="fa fa-fw fa-lg fa-plus"></i>
+                                    <span langtag="word-add"></span>
+                                </a>
+                                <div class="btn-group mr-2 mt-2 mt-md-0"
+                                     data-nps-require-any-node-actions="tunnels/start,tunnels/stop,tunnels/delete">
+                                    <button type="button" class="btn btn-outline btn-primary tunnel-bulk-action" id="tunnel-bulk-start" onclick="runSelectedTunnelBatch('start')" disabled>
+                                        <i class="fa fa-play"></i>
+                                        <span langtag="word-start"></span>
+                                    </button>
+                                    <button type="button" class="btn btn-outline btn-warning tunnel-bulk-action" id="tunnel-bulk-stop" onclick="runSelectedTunnelBatch('stop')" disabled>
+                                        <i class="fa fa-pause"></i>
+                                        <span langtag="word-stop"></span>
+                                    </button>
+                                    <button type="button"
+                                            class="btn btn-outline btn-danger tunnel-bulk-action"
+                                            id="tunnel-bulk-delete"
+                                            data-nps-require-node-action="tunnels/delete"
+                                            onclick="runSelectedTunnelBatch('delete')"
+                                            disabled>
+                                        <i class="fa fa-trash"></i>
+                                        <span langtag="word-delete"></span>
+                                    </button>
+                                </div>
+                                <button type="button"
+                                        class="btn btn-outline btn-default mr-2 mt-2 mt-md-0 tunnel-bulk-action"
+                                        id="tunnel-bulk-reset"
+                                        data-nps-require-any-node-actions="tunnels/start,tunnels/stop,tunnels/delete"
+                                        onclick="window.nps.clearTableSelections('#table')"
+                                        disabled>
+                                    <i class="fa fa-times"></i>
+                                    <span langtag="word-cancel"></span>
+                                </button>
+                                <span class="text-muted small align-self-center mt-2 mt-md-0"
+                                      id="tunnel-bulk-selection-summary"
+                                      data-nps-require-any-node-actions="tunnels/start,tunnels/stop,tunnels/delete"></span>
+                            </div>
                         </div>
                         <table class="table-striped table-hover" data-mobile-responsive="true" id="taskList_table"></table>
                     </div>
@@ -35,27 +75,249 @@
 </div>
 
 <script>
-    name = '{{.name}}:'.replace(/\s*/g, "")
-    $('#langtag').attr('langtag', 'page-list' + name.replace(/:.*/, "")).next().text(name.split(":")[1])
+    var tunnelPageDisplay = {};
+    var tunnelPageType = window.nps.pageParam('type') || '';
+    var tunnelClientID = window.nps.pageIntParam('client_id');
+    window.nps.tunnelActions = {
+        list: window.nps.nodeRoute('tunnels'),
+        clear: function (id) { return window.nps.nodeMutation('tunnel', 'clear', id); },
+        start: function (id) { return window.nps.nodeMutation('tunnel', 'start', id); },
+        stop: function (id) { return window.nps.nodeMutation('tunnel', 'stop', id); },
+        del: function (id) { return window.nps.nodeMutation('tunnel', 'delete', id); }
+    };
+
+    function tunnelPageTitleParts() {
+        var typeKey = normalizedTunnelPageType();
+        if (tunnelClientID > 0) {
+            return {
+                tag: 'page-listclientid',
+                suffix: String(tunnelClientID)
+            };
+        }
+        switch (typeKey) {
+            case 'tcp':
+            case 'udp':
+            case 'socks5':
+            case 'mixproxy':
+            case 'secret':
+            case 'p2p':
+                return {
+                    tag: 'page-list' + typeKey,
+                    suffix: ''
+                };
+            case 'httpproxy':
+                return {
+                    tag: 'page-listhttpproxy',
+                    suffix: ''
+                };
+            case 'file':
+                return {
+                    tag: 'page-listfileserver',
+                    suffix: ''
+                };
+            default:
+                return {
+                    tag: 'page-listtunnel',
+                    suffix: ''
+                };
+        }
+    }
+
+    function currentTunnelPageAction() {
+        var path = window.location.pathname || '';
+        var base = (window.nps.web_base_url || '').replace(/\/+$/, '');
+        if (base && path.indexOf(base) === 0) {
+            path = path.substring(base.length) || '/';
+        }
+        var match = String(path).toLowerCase().match(/^\/index\/([^/?#]+)/);
+        return match ? match[1] : '';
+    }
+
+    function resolvedTunnelPageType() {
+        if (tunnelPageType) {
+            return tunnelPageType;
+        }
+        switch (currentTunnelPageAction()) {
+            case 'tcp':
+                return 'tcp';
+            case 'udp':
+                return 'udp';
+            case 'socks5':
+                return 'socks5';
+            case 'http':
+                return 'httpProxy';
+            case 'mix':
+                return 'mixProxy';
+            case 'file':
+                return 'file';
+            case 'secret':
+                return 'secret';
+            case 'p2p':
+                return 'p2p';
+            default:
+                return '';
+        }
+    }
+
+    function normalizedTunnelPageType() {
+        return String(resolvedTunnelPageType() || '').toLowerCase();
+    }
+
+    function tunnelShowsModeColumn() {
+        return !normalizedTunnelPageType();
+    }
+
+    function tunnelShowsTargetColumn() {
+        var typeKey = normalizedTunnelPageType();
+        return !typeKey || typeKey === 'tcp' || typeKey === 'udp' || typeKey === 'secret' || typeKey === 'p2p';
+    }
+
+    function tunnelShowsSecretColumns() {
+        var typeKey = normalizedTunnelPageType();
+        return !typeKey || typeKey === 'secret' || typeKey === 'p2p';
+    }
+
+    function tunnelShowsFileColumns() {
+        return normalizedTunnelPageType() === 'file';
+    }
+
+    function tunnelShowsMixProxyColumns() {
+        return normalizedTunnelPageType() === 'mixproxy';
+    }
+
+    function applyTunnelPageTitle() {
+        var title = tunnelPageTitleParts();
+        var $tag = $('#langtag');
+        $tag.attr('langtag', title.tag);
+        var $suffix = $tag.next();
+        if (title.suffix) {
+            $suffix.text(title.suffix);
+        } else {
+            $suffix.text('');
+        }
+        if ($('body').setLang) {
+            $('body').setLang('.nps-list-title');
+        }
+    }
+
+    function tunnelDisplayBridge() {
+        return tunnelPageDisplay.bridge || {};
+    }
+
+    function tunnelPrimaryBridge() {
+        return tunnelDisplayBridge().primary || {};
+    }
+
+    function tunnelBinaryName() {
+        return './npc' + (tunnelPageDisplay.client_binary_suffix || '');
+    }
+
+    function tunnelFallbackSecretValue() {
+        return 'true';
+    }
+
+    function tunnelAccessVKey(row) {
+        var visitorVKey = {{printf "%q" .visitor_vkey}};
+        if (visitorVKey) {
+            return visitorVKey;
+        }
+        if (row && row.Client && row.Client.VerifyKey) {
+            return row.Client.VerifyKey;
+        }
+        return '';
+    }
+
+    function configureTunnelPageLinks() {
+        var addLink = document.getElementById('tunnel-add-link');
+        if (!addLink) {
+            return;
+        }
+        var params = {};
+        if (resolvedTunnelPageType()) {
+            params.type = resolvedTunnelPageType();
+        }
+        if (tunnelClientID > 0) {
+            params.client_id = tunnelClientID;
+        }
+        addLink.href = window.nps.pagePath('index', 'add', params);
+        addLink.setAttribute('data-nps-page-query', $.param(params));
+        addLink.style.display = tunnelShowsFileColumns() ? 'none' : '';
+    }
+
+    function canCreateTunnel() {
+        return !tunnelShowsFileColumns()
+            && window.nps.pageAvailable('index', 'add')
+            && window.nps.nodeActionAvailable('tunnels/add');
+    }
+
+    function canStartTunnel() {
+        return window.nps.nodeActionAvailable('tunnels/start');
+    }
+
+    function canStopTunnel() {
+        return window.nps.nodeActionAvailable('tunnels/stop');
+    }
+
+    function canDeleteTunnel() {
+        return window.nps.nodeActionAvailable('tunnels/delete');
+    }
+
+    function canEditTunnel() {
+        return window.nps.pageAvailable('index', 'edit') && window.nps.nodeActionAvailable('tunnels/edit');
+    }
+
+    function canClearTunnel() {
+        return window.nps.nodeActionAvailable('tunnels/clear');
+    }
+
+    function canBulkManageTunnels() {
+        return window.nps.anyNodeActionAvailable(['tunnels/start', 'tunnels/stop', 'tunnels/delete']);
+    }
+
+    function tunnelClearAction(row, mode, content) {
+        if (!canClearTunnel()) {
+            return content;
+        }
+        return '<span onclick="submitTunnelClear(' + row.Id + ', \'' + mode + '\')">' + content + '</span>';
+    }
+
+    function submitTunnelClear(id, mode) {
+        window.nps.submitFormAction('clear', window.nps.tunnelActions.clear(id), {id: id, mode: mode});
+    }
+
+    function tunnelControlAction(action, row, mode, content) {
+        var canControl = action === 'start' ? canStartTunnel() : canStopTunnel();
+        if (!canControl) {
+            return content;
+        }
+        return '<span onclick="submitTunnelMode(\'' + action + '\', ' + row.Id + ', \'' + mode + '\')">' + content + '</span>';
+    }
+
+    function submitTunnelMode(action, id, mode) {
+        var request = action === 'start' ? window.nps.tunnelActions.start(id) : window.nps.tunnelActions.stop(id);
+        window.nps.submitFormAction(action, request, {id: id, mode: mode});
+    }
+
+    function tunnelMegabyteUnitText() {
+        return window.nps.langText('unit-megabyte', '');
+    }
 
     /*bootstrap table*/
+    function initTunnelTable() {
     $('#table').bootstrapTable({
         toolbar: "#toolbar",
-        method: 'post', // 服务器数据的请求方式 get or post
-        url: "{{.web_base_url}}/index/gettunnel", // 服务器数据的加载地址
+        method: 'get', // 服务器数据的请求方式 get or post
+        url: window.nps.tunnelActions.list, // 服务器数据的加载地址
         queryParams: function (params) {
-            return {
-                "offset": params.offset,
-                "limit": params.limit,
-                "type": {{.type}},
-                "client_id": {{.client_id}},
-                "search": params.search,
-                "sort": params.sort,
-                "order": params.order
-            }
+            return window.nps.resourceListQueryParams(params, {
+                "type": resolvedTunnelPageType(),
+                "client_id": tunnelClientID
+            });
+        },
+        responseHandler: function (response) {
+            return window.nps.resourceListResponseHandler(response, window.nps.adaptNodeTunnelResource);
         },
         search: true,
-        contentType: "application/x-www-form-urlencoded",
         striped: true, // 设置为true会有隔行变色效果
         showHeader: true,
         showColumns: true,
@@ -65,8 +327,11 @@
         pageNumber: 1,
         pageList: [5, 10, 20, 50, 100, 'all'],
         cookie: true,
-        cookieIdTable: '{{.type}}',
+        cookieIdTable: normalizedTunnelPageType() || 'tunnel',
         cookieStorage: 'localStorage',
+        idField: 'Id',
+        uniqueId: 'Id',
+        maintainMetaData: true,
         detailView: true,
         smartDisplay: true, // 智能显示 pagination 和 cardview 等
         onExpandRow: function () { $('body').setLang('.detail-view'); },
@@ -77,14 +342,14 @@
             if (row.Mode == "tcp" || row.Mode == "udp") {
                 proxyprotocol = '<b langtag="word-proxyprotocoltitle"></b>: <span langtag="word-proxyprotocolv' + row.Target.ProxyProtocol + '"></span>&emsp;'
             }
-            tmp = '<b langtag="word-exportflow"></b>: <span onclick="submitform(\'clear\', \'{{.web_base_url}}/index/clear\', {\'id\':' + row.Id + ', \'mode\': \'flow\'})">' + changeunit(row.Flow.ExportFlow) + '</span>&emsp;'
-                + '<b langtag="word-inletflow"></b>: <span onclick="submitform(\'clear\', \'{{.web_base_url}}/index/clear\', {\'id\':' + row.Id + ', \'mode\': \'flow\'})">' + changeunit(row.Flow.InletFlow) + '</span>&emsp;'
+            tmp = '<b langtag="word-exportflow"></b>: <span onclick="window.nps.submitFormAction(\'clear\', window.nps.tunnelActions.clear(' + row.Id + '), {\'id\':' + row.Id + ', \'mode\': \'flow\'})">' + changeunit(row.Flow.ExportFlow) + '</span>&emsp;'
+                + '<b langtag="word-inletflow"></b>: <span onclick="window.nps.submitFormAction(\'clear\', window.nps.tunnelActions.clear(' + row.Id + '), {\'id\':' + row.Id + ', \'mode\': \'flow\'})">' + changeunit(row.Flow.InletFlow) + '</span>&emsp;'
                 + '<b langtag="word-crypt"></b>: <span langtag="word-' + row.Client.Cnf.Crypt + '"></span>&emsp;'
                 + '<b langtag="word-compress"></b>: <span langtag="word-' + row.Client.Cnf.Compress + '"></span>&emsp;'
                 + proxyprotocol
                 + '<b langtag="word-ishttp"></b>: <span langtag="word-' + row.IsHttp + '"></span>&emsp;<br/><br>'
-                + '<b langtag="word-flowlimit"></b>: <span onclick="submitform(\'clear\', \'{{.web_base_url}}/index/clear\', {\'id\':' + row.Id + ', \'mode\': \'flow_limit\'})">' + row.Flow.FlowLimit + 'MB</span>&emsp;'
-                + '<b langtag="word-timelimit"></b>: <span onclick="submitform(\'clear\', \'{{.web_base_url}}/index/clear\', {\'id\':' + row.Id + ', \'mode\': \'time_limit\'})">' + row.Flow.TimeLimit + '</span>&emsp;'
+                + '<b langtag="word-flowlimit"></b>: <span onclick="window.nps.submitFormAction(\'clear\', window.nps.tunnelActions.clear(' + row.Id + '), {\'id\':' + row.Id + ', \'mode\': \'flow_limit\'})">' + row.Flow.FlowLimit + tunnelMegabyteUnitText() + '</span>&emsp;'
+                + '<b langtag="word-timelimit"></b>: <span onclick="window.nps.submitFormAction(\'clear\', window.nps.tunnelActions.clear(' + row.Id + '), {\'id\':' + row.Id + ', \'mode\': \'time_limit\'})">' + row.Flow.TimeLimit + '</span>&emsp;'
             if (row.Mode == "mixProxy") {
                 // 0=off, 1=whitelist, 2=blacklist
                 var destMode = Number(row.DestAclMode || 0)
@@ -121,21 +386,26 @@
             }
             if (row.Mode == "p2p") {
                 return tmp + "<br/><br>"
-                    + '<b langtag="word-commandaccessp2p"></b>: ' + '<code onclick="oCopy(this)">' + "./npc{{.win}} -server=\"{{.addr}}\" -vkey=\"" + row.Client.VerifyKey
-                    + "\" -type=\"" + {{.bridgeType}} + "\" -password=\"" + row.Password + "\" -target=\"" + row.Target.TargetStr + "\" -target_type=\"" + row.TargetType + "\"</code>" + "<br/><br>"
-                    + '<b langtag="word-commandaccessp2ps"></b>: ' + '<code onclick="oCopy(this)">' + "./npc{{.win}} -server=\"{{.addr}}\" -vkey=\"" + row.Client.VerifyKey
-                    + "\" -type=\"" + {{.bridgeType}} + "\" -password=\"" + row.Password + "\" -local_type=\"p2ps\" -fallback_secret=\"{{if .allow_secret_link}}true{{else}}false{{end}}\"" + "</code>" + "<br/><br>"
-                    + '<b langtag="word-commandaccessp2pt"></b>: ' + '<code onclick="oCopy(this)">' + "./npc{{.win}} -server=\"{{.addr}}\" -vkey=\"" + row.Client.VerifyKey
-                    + "\" -type=\"" + {{.bridgeType}} + "\" -password=\"" + row.Password + "\" -local_type=\"p2pt\" -fallback_secret=\"{{if .allow_secret_link}}true{{else}}false{{end}}\"" + "</code>"
+                    + '<b langtag="word-commandaccessp2p"></b>: ' + '<code onclick="oCopy(this)">' + tunnelBinaryName() + ' -server="' + tunnelPrimaryBridge().addr + '" -vkey="' + tunnelAccessVKey(row)
+                    + '" -type="' + tunnelPrimaryBridge().type + '" -password="' + row.Password + '" -target="' + row.Target.TargetStr + '" -target_type="' + row.TargetType + '"</code>' + "<br/><br>"
+                    + '<b langtag="word-commandaccessp2ps"></b>: ' + '<code onclick="oCopy(this)">' + tunnelBinaryName() + ' -server="' + tunnelPrimaryBridge().addr + '" -vkey="' + tunnelAccessVKey(row)
+                    + '" -type="' + tunnelPrimaryBridge().type + '" -password="' + row.Password + '" -local_type="p2ps" -fallback_secret="' + tunnelFallbackSecretValue() + '"</code>' + "<br/><br>"
+                    + '<b langtag="word-commandaccessp2pt"></b>: ' + '<code onclick="oCopy(this)">' + tunnelBinaryName() + ' -server="' + tunnelPrimaryBridge().addr + '" -vkey="' + tunnelAccessVKey(row)
+                    + '" -type="' + tunnelPrimaryBridge().type + '" -password="' + row.Password + '" -local_type="p2pt" -fallback_secret="' + tunnelFallbackSecretValue() + '"</code>'
             }
             if (row.Mode == "secret") {
-                return tmp + "<br/><br>" + '<b langtag="word-commandaccess"></b>: ' + '<code onclick="oCopy(this)">' + "./npc{{.win}} -server=\"{{.addr}}\" -vkey=\"" + row.Client.VerifyKey
-                    + "\" -type=\"" + {{.bridgeType}} + "\" -password=\"" + row.Password + "\" -target_type=\"" + row.TargetType + "\" -local_type=\"secret\"" + "</code>"
+                return tmp + "<br/><br>" + '<b langtag="word-commandaccess"></b>: ' + '<code onclick="oCopy(this)">' + tunnelBinaryName() + ' -server="' + tunnelPrimaryBridge().addr + '" -vkey="' + tunnelAccessVKey(row)
+                    + '" -type="' + tunnelPrimaryBridge().type + '" -password="' + row.Password + '" -target_type="' + row.TargetType + '" -local_type="secret"</code>'
             }
             return tmp
         },
         // 表格的列
         columns: [
+            (canBulkManageTunnels() ? {
+                checkbox: true,
+                align: 'center',
+                valign: 'middle'
+            } : null),
             {
                 field: 'Id', //域值
                 title: '<span langtag="word-id"></span>', //标题
@@ -177,8 +447,7 @@
                     return '<span onclick="oCopy(this)">' + value + '</span>'
                 }
             },
-            {{ if not .type }}
-            {
+            (tunnelShowsModeColumn() ? {
                 field: 'Mode', //域值
                 title: '<span langtag="word-scheme"></span>', //标题
                 halign: 'center',
@@ -187,8 +456,7 @@
                 formatter: function (value, row, index) {
                     return '<span langtag="scheme-' + value + '"></span>'
                 }
-            },
-            {{ end }}
+            } : null),
             {
                 field: 'Port', //域值
                 title: '<span langtag="word-port"></span>', //标题
@@ -199,8 +467,7 @@
                     return '<span onclick="oCopy(this)">' + value + '</span>'
                 }
             },
-            {{ if or (not .type) (eq .type "tcp") (eq .type "udp") (eq .type "secret") (eq .type "p2p") }}
-            {
+            (tunnelShowsTargetColumn() ? {
                 field: 'Target.TargetStr', //域值
                 title: '<span langtag="word-target"></span>', //标题
                 halign: 'center',
@@ -209,10 +476,8 @@
                 formatter: function (value, row, index) {
                     return '<span onclick="oCopy(this)">' + value + '</span>'
                 }
-            },
-            {{ end }}
-            {{ if or (not .type) (eq .type "secret") (eq .type "p2p") }}
-            {
+            } : null),
+            (tunnelShowsSecretColumns() ? {
                 field: 'TargetType', //域值
                 title: '<span langtag="word-targettype"></span>', //标题
                 halign: 'center',
@@ -221,8 +486,8 @@
                 formatter: function (value, row, index) {
                     return '<span onclick="oCopy(this)">' + String(value).toUpperCase() + '</span>'
                 }
-            },
-            {
+            } : null),
+            (tunnelShowsSecretColumns() ? {
                 field: 'Password', //域值
                 title: '<span langtag="word-identificationkey"></span>', //标题
                 halign: 'center',
@@ -231,24 +496,20 @@
                 formatter: function (value, row, index) {
                     return '<span onclick="oCopy(this)">' + value + '</span>'
                 }
-            },
-            {{ end }}
-            {{ if and .type (eq .type "file") }}
-            {
+            } : null),
+            (tunnelShowsFileColumns() ? {
                 field: 'LocalPath', //域值
                 title: '<span langtag="word-localpath"></span>', //标题
                 halign: 'center',
                 visible: true //false表示不显示
-            },
-            {
+            } : null),
+            (tunnelShowsFileColumns() ? {
                 field: 'StripPre', //域值
                 title: '<span langtag="word-stripprefix"></span>', //标题
                 halign: 'center',
                 visible: true //false表示不显示
-            },
-            {{ end }}
-            {{ if and .type (eq .type "mixProxy") }}
-            {
+            } : null),
+            (tunnelShowsMixProxyColumns() ? {
                 field: 'HttpProxy', //域值
                 title: '<span langtag="word-httpproxy"></span>', //内容
                 align: 'center',
@@ -256,18 +517,17 @@
                 visible: true, //false表示不显示
                 sortable: true, //启用排序
                 formatter: function (value, row, index) {
-                    btn_group = '<div class="btn-group">'
-                    if (value) {
-                        btn_group += '<a onclick="submitform(\'stop\', \'{{.web_base_url}}/index/stop\', {\'id\':' + row.Id + ', \'mode\': \'http\'})" class="btn btn-outline btn-warning"><i class="fa fa-pause"></i></a>'
-                    } else {
-                        btn_group += '<a onclick="submitform(\'start\', \'{{.web_base_url}}/index/start\', {\'id\':' + row.Id + ', \'mode\': \'http\'})" class="btn btn-outline btn-primary"><i class="fa fa-play"></i></a>'
+                    var btnGroup = '<div class="btn-group">';
+                    if (value && canStopTunnel()) {
+                        btnGroup += '<a onclick="submitTunnelMode(\'stop\', ' + row.Id + ', \'http\')" class="btn btn-outline btn-warning"><i class="fa fa-pause"></i></a>';
+                    } else if (!value && canStartTunnel()) {
+                        btnGroup += '<a onclick="submitTunnelMode(\'start\', ' + row.Id + ', \'http\')" class="btn btn-outline btn-primary"><i class="fa fa-play"></i></a>';
                     }
-                    btn_group += '</div>'
-                    return btn_group
-
+                    btnGroup += '</div>';
+                    return btnGroup;
                 }
-            },
-            {
+            } : null),
+            (tunnelShowsMixProxyColumns() ? {
                 field: 'Socks5Proxy', //域值
                 title: '<span langtag="word-socks5proxy"></span>', //内容
                 align: 'center',
@@ -275,17 +535,16 @@
                 visible: true, //false表示不显示
                 sortable: true, //启用排序
                 formatter: function (value, row, index) {
-                    btn_group = '<div class="btn-group">'
-                    if (value) {
-                        btn_group += '<a onclick="submitform(\'stop\', \'{{.web_base_url}}/index/stop\', {\'id\':' + row.Id + ', \'mode\': \'socks5\'})" class="btn btn-outline btn-warning"><i class="fa fa-pause"></i></a>'
-                    } else {
-                        btn_group += '<a onclick="submitform(\'start\', \'{{.web_base_url}}/index/start\', {\'id\':' + row.Id + ', \'mode\': \'socks5\'})" class="btn btn-outline btn-primary"><i class="fa fa-play"></i></a>'
+                    var btnGroup = '<div class="btn-group">';
+                    if (value && canStopTunnel()) {
+                        btnGroup += '<a onclick="submitTunnelMode(\'stop\', ' + row.Id + ', \'socks5\')" class="btn btn-outline btn-warning"><i class="fa fa-pause"></i></a>';
+                    } else if (!value && canStartTunnel()) {
+                        btnGroup += '<a onclick="submitTunnelMode(\'start\', ' + row.Id + ', \'socks5\')" class="btn btn-outline btn-primary"><i class="fa fa-play"></i></a>';
                     }
-                    btn_group += '</div>'
-                    return btn_group
+                    btnGroup += '</div>';
+                    return btnGroup;
                 }
-            },
-            {{ end }}
+            } : null),
             {
                 field: 'InletFlow', //域值
                 title: '<span langtag="word-inletflow"></span>', //内容
@@ -294,7 +553,7 @@
                 visible: false, //false表示不显示
                 sortable: true, //启用排序
                 formatter: function (value, row, index) {
-                    return '<span onclick="submitform(\'clear\', \'{{.web_base_url}}/index/clear\', {\'id\':' + row.Id + ', \'mode\': \'flow\'})">' + changeunit(row.Flow.InletFlow) + '</span>'
+                    return tunnelClearAction(row, 'flow', changeunit(row.Flow.InletFlow));
                 }
             },
             {
@@ -305,7 +564,7 @@
                 visible: false, //false表示不显示
                 sortable: true, //启用排序
                 formatter: function (value, row, index) {
-                    return '<span onclick="submitform(\'clear\', \'{{.web_base_url}}/index/clear\', {\'id\':' + row.Id + ', \'mode\': \'flow\'})">' + changeunit(row.Flow.ExportFlow) + '</span>'
+                    return tunnelClearAction(row, 'flow', changeunit(row.Flow.ExportFlow));
                 }
             },
             {
@@ -316,7 +575,7 @@
                 visible: true, //false表示不显示
                 sortable: true, //启用排序
                 formatter: function (value, row, index) {
-                    return '<span onclick="submitform(\'clear\', \'{{.web_base_url}}/index/clear\', {\'id\':' + row.Id + ', \'mode\': \'flow\'})">' + changeunit(row.Flow.InletFlow + row.Flow.ExportFlow) + '</span>'
+                    return tunnelClearAction(row, 'flow', changeunit(row.Flow.InletFlow + row.Flow.ExportFlow));
                 }
             },
             {
@@ -330,7 +589,7 @@
                     if (row.Flow.FlowLimit === 0) {
                         return '∞'
                     }
-                    return '<span onclick="submitform(\'clear\', \'{{.web_base_url}}/index/clear\', {\'id\':' + row.Id + ', \'mode\': \'flow_limit\'})">' + changeunit(row.Flow.FlowLimit*1024*1024 - row.Flow.InletFlow - row.Flow.ExportFlow) + '</span>'
+                    return tunnelClearAction(row, 'flow_limit', changeunit(row.Flow.FlowLimit*1024*1024 - row.Flow.InletFlow - row.Flow.ExportFlow));
                 }
             },
             {
@@ -341,7 +600,7 @@
                 visible: false, //false表示不显示
                 sortable: true, //启用排序
                 formatter: function (value, row, index) {
-                    return '<span onclick="submitform(\'clear\', \'{{.web_base_url}}/index/clear\', {\'id\':' + row.Id + ', \'mode\': \'time_limit\'})">' + getRemainingTime(row.Flow.TimeLimit).formatted + '</span>'
+                    return tunnelClearAction(row, 'time_limit', getRemainingTime(row.Flow.TimeLimit).formatted);
                 }
             },
             {
@@ -355,7 +614,7 @@
                     if (value === 0) {
                         return '<span langtag="word-false"></span>'
                     }
-                    return '<span onclick="submitform(\'clear\', \'{{.web_base_url}}/index/clear\', {\'id\':' + row.Id + ', \'mode\': \'flow_limit\'})">' + changeunit(value * 1024 * 1024) + '</span>'
+                    return tunnelClearAction(row, 'flow_limit', changeunit(value * 1024 * 1024));
                 }
             },
             {
@@ -369,7 +628,7 @@
                     if (value === "0001-01-01T00:00:00Z") {
                         return '<span langtag="word-false"></span>'
                     }
-                    return '<span onclick="submitform(\'clear\', \'{{.web_base_url}}/index/clear\', {\'id\':' + row.Id + ', \'mode\': \'time_limit\'})">' + value + '</span>'
+                    return tunnelClearAction(row, 'time_limit', value);
                 }
             },
             {
@@ -408,7 +667,7 @@
                 formatter: function (value, row, index) {
                     if (value) {
                         if (row.Mode && row.Mode == "tcp") {
-                            return '<a href="' + 'http://{{.ip}}:' + row.Port + '" target="_blank"><span class="badge badge-primary" langtag="word-open"></span></a>'
+                            return '<a href="' + 'http://' + tunnelPrimaryBridge().ip + ':' + row.Port + '" target="_blank"><span class="badge badge-primary" langtag="word-open"></span></a>'
                         } else {
                             return '<span class="badge badge-primary" langtag="word-open"></span>'
                         }
@@ -427,7 +686,7 @@
                 formatter: function (value, row, index) {
                     if (value) {
                         if (row.Mode && row.Mode == "tcp") {
-                            return '<a href="' + (row.IsHttp ? 'http://' : 'https://') + '{{.ip}}:' + row.Port + '" target="_blank"><span class="badge badge-primary" langtag="word-online"></span></a>'
+                            return '<a href="' + (row.IsHttp ? 'http://' : 'https://') + tunnelPrimaryBridge().ip + ':' + row.Port + '" target="_blank"><span class="badge badge-primary" langtag="word-online"></span></a>'
                         } else {
                             return '<span class="badge badge-primary" langtag="word-online"></span>'
                         }
@@ -443,23 +702,91 @@
                 halign: 'center',
                 visible: true, //false表示不显示
                 formatter: function (value, row, index) {
-                    btn_group = '<div class="btn-group">'
+                    var btnGroup = '<div class="btn-group">';
                     if (row.Status) {
-                        btn_group += "<a onclick=\"submitform('stop', '{{.web_base_url}}/index/stop', {'id':" + row.Id
-                        btn_group += '})" class="btn btn-outline btn-warning"><i class="fa fa-pause"></i></a>'
-                    } else {
-                        btn_group += "<a onclick=\"submitform('start', '{{.web_base_url}}/index/start', {\'id\':" + row.Id
-                        btn_group += '})" class="btn btn-outline btn-primary"><i class="fa fa-play"></i></a>'
+                        if (canStopTunnel()) {
+                            btnGroup += '<a onclick="window.nps.submitFormAction(\'stop\', window.nps.tunnelActions.stop(' + row.Id + '), {\'id\':' + row.Id + '})" class="btn btn-outline btn-warning"><i class="fa fa-pause"></i></a>';
+                        }
+                    } else if (canStartTunnel()) {
+                        btnGroup += '<a onclick="window.nps.submitFormAction(\'start\', window.nps.tunnelActions.start(' + row.Id + '), {\'id\':' + row.Id + '})" class="btn btn-outline btn-primary"><i class="fa fa-play"></i></a>';
                     }
-                    btn_group += "<a onclick=\"submitform('delete', '{{.web_base_url}}/index/del', {'id':" + row.Id
-                    btn_group += '})" class="btn btn-outline btn-danger"><i class="fa fa-trash"></i></a>'
-                    if (row.Mode && row.Mode !== "file") {
-                        btn_group += '<a href="{{.web_base_url}}/index/edit?id=' + row.Id + '" class="btn btn-outline btn-success"><i class="fa fa-edit"></i></a>'
+                    if (canDeleteTunnel()) {
+                        btnGroup += '<a onclick="window.nps.submitFormAction(\'delete\', window.nps.tunnelActions.del(' + row.Id + '), {\'id\':' + row.Id + '})" class="btn btn-outline btn-danger"><i class="fa fa-trash"></i></a>';
                     }
-                    btn_group += '</div>'
-                    return btn_group
+                    if (canEditTunnel() && row.Mode && row.Mode !== "file") {
+                        btnGroup += '<a href="' + window.nps.pagePath('index', 'edit', {id: row.Id}) + '" class="btn btn-outline btn-success"><i class="fa fa-edit"></i></a>';
+                    }
+                    btnGroup += '</div>';
+                    return btnGroup;
                 }
             }
-        ]
+        ].filter(Boolean)
+    });
+
+    function buildSelectedTunnelBatchItems(ids, action) {
+        return ids.map(function (id) {
+            switch (action) {
+                case 'start':
+                    return {
+                        id: action + '-tunnel-' + id,
+                        method: 'POST',
+                        path: window.nps.tunnelActions.start(id).url,
+                        body: {id: id}
+                    };
+                case 'stop':
+                    return {
+                        id: action + '-tunnel-' + id,
+                        method: 'POST',
+                        path: window.nps.tunnelActions.stop(id).url,
+                        body: {id: id}
+                    };
+                case 'delete':
+                    var deleteRequest = window.nps.tunnelActions.del(id);
+                    return {
+                        id: action + '-tunnel-' + id,
+                        method: deleteRequest.method,
+                        path: deleteRequest.url,
+                        body: {id: id}
+                    };
+                default:
+                    return null;
+            }
+        }).filter(Boolean);
+    }
+
+    function runSelectedTunnelBatch(action) {
+        return window.nps.runSelectionBatch({
+            table: '#table',
+            idField: 'Id',
+            trigger: '.tunnel-bulk-action',
+            action: action,
+            confirmAction: action,
+            buildItems: function (ids) {
+                return buildSelectedTunnelBatchItems(ids, action);
+            },
+            refresh: function () {
+                $('#table').bootstrapTable('refresh');
+            }
+        });
+    }
+
+    window.nps.bindTableSelectionActions({
+        table: '#table',
+        idField: 'Id',
+        summary: '#tunnel-bulk-selection-summary',
+        buttons: '.tunnel-bulk-action'
+    });
+    window.nps.syncConditionalVisibility(document.getElementById('toolbar'));
+    }
+
+    $(function () {
+        applyTunnelPageTitle();
+        configureTunnelPageLinks();
+        window.nps.fetchNodeDisplay().then(function (display) {
+            tunnelPageDisplay = display || {};
+            initTunnelTable();
+        }, function () {
+            initTunnelTable();
+        });
     });
 </script>

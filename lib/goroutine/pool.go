@@ -1,17 +1,32 @@
 package goroutine
 
 import (
-	"errors"
+	"bytes"
 	"io"
 	"net"
-	"strings"
 	"sync"
-	"time"
 
 	"github.com/djylb/nps/lib/common"
 	"github.com/djylb/nps/lib/file"
 	"github.com/djylb/nps/lib/logs"
 	"github.com/panjf2000/ants/v2"
+)
+
+const httpProbePrefixLimit = 8
+
+var (
+	httpResponsePrefix  = []byte("HTTP/")
+	httpRequestPrefixes = [][]byte{
+		[]byte("GET "),
+		[]byte("POST "),
+		[]byte("HEAD "),
+		[]byte("PUT "),
+		[]byte("DELETE "),
+		[]byte("PATCH "),
+		[]byte("OPTIONS "),
+		[]byte("CONNECT "),
+		[]byte("TRACE "),
+	}
 )
 
 type connGroup struct {
@@ -40,32 +55,16 @@ func CopyBuffer(dst io.Writer, src io.Reader, flows []*file.Flow, task *file.Tun
 	buf := common.BufPoolCopy.Get()
 	defer common.BufPoolCopy.Put(buf)
 
-	checkedHTTP := false
+	checkedHTTP := task == nil
+	var httpProbe [httpProbePrefixLimit]byte
+	httpProbeUsed := 0
 
 	for {
 		nr, er := src.Read(buf)
 
-		if nr > 0 && task != nil && !checkedHTTP {
-			checkedHTTP = true
-			sample := buf[:nr]
-			if len(sample) > 4096 {
-				sample = sample[:4096]
-			}
-			firstLine := string(sample)
-			if len(firstLine) > 3 {
-				method := firstLine[:3]
-				if method == "HTT" || method == "GET" || method == "POS" || method == "HEA" || method == "PUT" || method == "DEL" {
-					if method != "HTT" {
-						heads := strings.Split(firstLine, "\r\n")
-						if len(heads) >= 2 {
-							logs.Info("HTTP Request method %s, %s, remote address %s, target %s", heads[0], heads[1], remote, task.Target.TargetStr)
-						}
-					}
-					task.IsHttp = true
-				} else {
-					task.IsHttp = false
-				}
-			}
+		if nr > 0 && !checkedHTTP {
+			httpProbeUsed += copy(httpProbe[httpProbeUsed:], buf[:nr])
+			checkedHTTP = resolveHTTPProbe(task, httpProbe[:httpProbeUsed], buf[:nr], remote)
 		}
 
 		if er == nil || nr > 0 {
@@ -79,14 +78,6 @@ func CopyBuffer(dst io.Writer, src io.Reader, flows []*file.Flow, task *file.Tun
 							continue
 						}
 						f.Add(nw64, nw64)
-						if f.FlowLimit > 0 && (f.FlowLimit<<20) < (f.ExportFlow+f.InletFlow) {
-							logs.Info("Flow limit exceeded")
-							return written, errors.New("flow limit exceeded")
-						}
-						if !f.TimeLimit.IsZero() && f.TimeLimit.Before(time.Now()) {
-							logs.Info("Time limit exceeded")
-							return written, errors.New("time limit exceeded")
-						}
 					}
 				}
 			}
@@ -109,19 +100,96 @@ func CopyBuffer(dst io.Writer, src io.Reader, flows []*file.Flow, task *file.Tun
 	return written, err
 }
 
+func resolveHTTPProbe(task *file.Tunnel, prefix, sample []byte, remote string) bool {
+	if task == nil {
+		return true
+	}
+	switch {
+	case prefixHasToken(prefix, httpResponsePrefix):
+		task.IsHttp = true
+		return true
+	case prefixHasAnyToken(prefix, httpRequestPrefixes):
+		task.IsHttp = true
+		logHTTPRequestSample(sample, task, remote)
+		return true
+	case len(prefix) >= httpProbePrefixLimit, !prefixCouldMatchHTTP(prefix):
+		return true
+	default:
+		return false
+	}
+}
+
+func prefixHasToken(prefix, token []byte) bool {
+	return len(prefix) >= len(token) && bytes.Equal(prefix[:len(token)], token)
+}
+
+func prefixHasAnyToken(prefix []byte, tokens [][]byte) bool {
+	for _, token := range tokens {
+		if prefixHasToken(prefix, token) {
+			return true
+		}
+	}
+	return false
+}
+
+func prefixCouldMatchHTTP(prefix []byte) bool {
+	if len(prefix) == 0 {
+		return true
+	}
+	if len(prefix) < len(httpResponsePrefix) && bytes.Equal(httpResponsePrefix[:len(prefix)], prefix) {
+		return true
+	}
+	for _, token := range httpRequestPrefixes {
+		if len(prefix) < len(token) && bytes.Equal(token[:len(prefix)], prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func logHTTPRequestSample(sample []byte, task *file.Tunnel, remote string) {
+	first, rest, ok := cutHTTPLine(sample)
+	if !ok {
+		return
+	}
+	second, _, ok := cutHTTPLine(rest)
+	if !ok {
+		return
+	}
+	target := ""
+	if task.Target != nil {
+		target = task.Target.TargetStr
+	}
+	logs.Info("HTTP Request method %s, %s, remote address %s, target %s", string(first), string(second), remote, target)
+}
+
+func cutHTTPLine(sample []byte) (line []byte, rest []byte, ok bool) {
+	i := bytes.IndexByte(sample, '\n')
+	if i < 0 {
+		return nil, nil, false
+	}
+	line = bytes.TrimRight(sample[:i], "\r")
+	return line, sample[i+1:], len(line) > 0
+}
+
 func copyConnGroup(group interface{}) {
 	cg, ok := group.(connGroup)
 	if !ok {
 		return
 	}
 
-	defer cg.wg.Done()
+	if cg.wg != nil {
+		defer cg.wg.Done()
+	}
 	defer func() {
 		_ = cg.src.Close()
 		_ = cg.dst.Close()
 	}()
 
-	*cg.n, _ = CopyBuffer(cg.dst, cg.src, cg.flows, cg.task, cg.remote)
+	written, _ := CopyBuffer(cg.dst, cg.src, cg.flows, cg.task, cg.remote)
+	if cg.n != nil {
+		*cg.n = written
+	}
 }
 
 type Conns struct {
@@ -144,8 +212,21 @@ func NewConns(c1 io.ReadWriteCloser, c2 net.Conn, flows []*file.Flow, wg *sync.W
 
 func copyConns(group interface{}) {
 	conns := group.(Conns)
+	defer func() {
+		if conns.wg != nil {
+			conns.wg.Done()
+		}
+	}()
+
 	wg := new(sync.WaitGroup)
 	wg.Add(2)
+	var closeOnce sync.Once
+	closeBoth := func() {
+		closeOnce.Do(func() {
+			_ = conns.conn1.Close()
+			_ = conns.conn2.Close()
+		})
+	}
 
 	var in, out int64
 	remoteAddr := ""
@@ -153,14 +234,21 @@ func copyConns(group interface{}) {
 		remoteAddr = ra.String()
 	}
 
-	_ = connCopyPool.Invoke(newConnGroup(conns.conn1, conns.conn2, wg, &in, conns.flows, conns.task, remoteAddr))
-	_ = connCopyPool.Invoke(newConnGroup(conns.conn2, conns.conn1, wg, &out, conns.flows, conns.task, remoteAddr))
+	if err := connCopyPool.Invoke(newConnGroup(conns.conn1, conns.conn2, wg, &in, conns.flows, conns.task, remoteAddr)); err != nil {
+		logs.Error("connCopyPool.Invoke failed: %v", err)
+		closeBoth()
+		wg.Done()
+	}
+	if err := connCopyPool.Invoke(newConnGroup(conns.conn2, conns.conn1, wg, &out, conns.flows, nil, remoteAddr)); err != nil {
+		logs.Error("connCopyPool.Invoke failed: %v", err)
+		closeBoth()
+		wg.Done()
+	}
 
 	wg.Wait()
 	if conns.task != nil && conns.task.Flow != nil {
 		conns.task.Flow.Sub(out, in)
 	}
-	conns.wg.Done()
 }
 
 var connCopyPool, _ = ants.NewPoolWithFunc(200000, copyConnGroup, ants.WithNonblocking(false))
@@ -178,14 +266,14 @@ func Join(c1, c2 net.Conn, flows []*file.Flow, task *file.Tunnel, remote string)
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	// c1 → c2
+	// c2 -> c1
 	go func() {
 		defer wg.Done()
 		defer closeBoth()
-		_, _ = CopyBuffer(c1, c2, flows, task, remote)
+		_, _ = CopyBuffer(c1, c2, flows, nil, remote)
 	}()
 
-	// c2 → c1
+	// c1 -> c2
 	go func() {
 		defer wg.Done()
 		defer closeBoth()
