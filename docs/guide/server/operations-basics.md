@@ -28,14 +28,15 @@ NPS 不要求在仓库根目录运行。
 ## 2. 访问 Web 管理界面
 
 - 浏览器访问 `http://<server-ip>:8081`
-- 仓库自带示例配置的初始账号：`admin`
-- 仓库自带示例配置的初始密码：`123`
+- 仓库自带示例配置的账号来自 `web_username`
+- 仓库自带示例配置的密码来自 `web_password`
 
-首次登录后建议尽快完成：
+正式环境应先修改配置文件里的 `web_username` 和 `web_password`，再重启 NPS。
 
-1. 修改默认密码
-2. 创建第一个客户端
-3. 检查服务端实际对外地址和端口
+登录后建议继续完成：
+
+1. 创建第一个客户端
+2. 检查服务端实际对外地址和端口
 
 ## 3. 查看日志与运行状态
 
@@ -92,8 +93,3 @@ flow_store_interval=10
 - `system_info_display` 控制是否显示系统信息
 - `flow_store_interval` 控制流量统计的持久化周期
 - 当前带宽和流量统计更适合运维观察，数值可能与业务端观测略有差异
-
-## 下一步
-
-- 需要重载、重启和更新：看 [重载、重启与更新](/guide/server/operations-lifecycle)
-- 需要 HTTPS、证书和前置代理：看 [HTTPS 与反向代理](/guide/server/https-and-proxy)

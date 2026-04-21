@@ -7,7 +7,7 @@
 - 内置默认值：配置缺失时程序使用的值
 - 仓库示例值：当前仓库 `conf/nps.conf` 的示例配置
 
-如果你要找登录保护、真实 IP 和前置代理安全，去看 [Web、HTTP 与安全](/reference/server-config-web)。
+如果你要找登录保护、真实 IP 和前置代理安全，去看 [Web、HTTP 与安全](#/reference/server-config-web)。
 
 ## 1. 代理端口与桥接相关
 
@@ -63,9 +63,8 @@
 | --- | --- | --- | --- |
 | `p2p_ip` | P2P 服务端监听地址（可写公网 IP） | `0.0.0.0` | `0.0.0.0` |
 | `p2p_port` | P2P 端口 | `0`（不启用） | `6000` |
+| `p2p_probe_timeout_ms` | P2P 探测超时 | `5000` | 注释示例 `5000` |
+| `p2p_handshake_timeout_ms` | P2P 握手超时 | `20000` | 注释示例 `20000` |
+| `p2p_transport_timeout_ms` | P2P 传输建立超时 | `10000` | 注释示例 `10000` |
 
-## 3. 相关页面
-
-- 需要 HTTPS、证书和反向代理的操作步骤：看 [HTTPS 与反向代理](/guide/server/https-and-proxy)
-- 需要默认端口和角色关系：看 [架构与核心概念](/getting-started/architecture)
-- 需要 P2P 的使用方式：看 [P2P 隧道](/guide/tunnels/p2p)
+其他 `p2p_*` 高级参数用于 NAT 预测、端口探测和端口映射。常规部署保持示例配置中的注释状态即可，只有在调试 P2P 成功率时才需要逐项调整。

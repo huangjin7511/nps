@@ -2,7 +2,7 @@
 
 这一页集中放环境变量渲染、健康检查、日志和调试相关能力。
 
-如果你要看 ACL 和配额，去看 [访问控制与限制](/reference/features-access)。
+如果你要看 ACL 和配额，去看 [访问控制与限制](#/reference/features-access)。
 
 ## HTTP 缓存（已弃用）
 
@@ -95,8 +95,3 @@ NPS 则在 `nps.conf` 中设置对应日志参数。
 可在服务端与客户端配置中开启 pprof 地址，用于性能分析和调试。
 
 留空或注释掉对应参数时为关闭状态。
-
-## 相关页面
-
-- 需要服务端日志和 pprof 配置：看 [访问控制与运行](/reference/server-config-runtime)
-- 需要客户端运行参数：看 [NPC 命令行参数](/reference/npc-cli)

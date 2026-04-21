@@ -45,8 +45,3 @@ make frontend-build-embedded
 pnpm --dir frontend install
 pnpm --dir frontend build:embedded
 ```
-
-## 下一步
-
-- 启动服务端：看 [启动 NPS 服务端](/getting-started/start-server)
-- 启动客户端：看 [启动 NPC 客户端](/getting-started/start-client)

@@ -101,9 +101,3 @@ target_is_https=true
 - NPS 先处理前端请求
 - 再主动以 HTTPS 连接后端
 - 适合标准 HTTP 反向代理和 WebSocket 场景
-
-## 相关页面
-
-- 需要证书部署、真实 IP 或前置反向代理：看 [HTTPS 与反向代理](/guide/server/https-and-proxy)
-- 需要域名转发的创建方式：看 [域名转发](/guide/tunnels/domain-forwarding)
-- 需要 URL 路由和错误页：看 [URL 路由、重写与 404](/reference/features-http-routing)

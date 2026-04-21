@@ -65,9 +65,3 @@ location=/static
 - 默认路径是 `web/static/page/error.html`
 - 也可以通过 `error_page` 指向别的文件
 - 这里更适合放单文件错误页，不适合继续依赖额外静态资源目录
-
-## 相关页面
-
-- 需要域名转发的创建方式：看 [域名转发](/guide/tunnels/domain-forwarding)
-- 需要 Host、Header 和重定向：看 [Header、重定向与 CORS](/reference/features-http-headers)
-- 需要证书和 TLS 方式：看 [证书、TLS 与站点保护](/reference/features-http-tls)

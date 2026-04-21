@@ -61,9 +61,3 @@
 - 需要多开：命令行用重复 `-launch`，长期格式用 `profiles`
 - 需要表达 `ws path` / `quic alpn`：继续写在 `server/server_addr` 后缀里
 - 如果 launch 很长，优先改成 `@path` 或远程 URL，不要硬塞命令行参数
-
-## 相关页面
-
-- 需要 `npc://` 协议细节：看 [`npc://` 协议](/reference/npc-launch-uri)
-- 需要 JSON 字段规范：看 [JSON 启动描述](/reference/npc-launch-json)
-- 需要快速上手：看 [快速启动与远程源](/guide/client/launch)

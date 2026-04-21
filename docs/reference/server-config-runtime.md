@@ -4,7 +4,7 @@
 
 本页里的日志轮转数字如果写成“默认/示例值”，优先指仓库当前自带 `conf/nps.conf`。
 
-如果你要找 Web 登录保护，去看 [Web、HTTP 与安全](/reference/server-config-web)。
+如果你要找 Web 登录保护，去看 [Web、HTTP 与安全](#/reference/server-config-web)。
 
 ## 1. 访问控制
 
@@ -72,7 +72,7 @@
 
 ## 4. 运行时访客密钥
 
-`public_vkey` 和 `visitor_vkey` 的字段定义放在 [基础项与密钥](/reference/server-config-basics)，但它们的运行时行为更适合在这里一起理解。
+`public_vkey` 和 `visitor_vkey` 的字段定义放在 [基础项与密钥](#/reference/server-config-basics)，但它们的运行时行为更适合在这里一起理解。
 
 补充说明：
 
@@ -92,9 +92,3 @@
 补充说明：
 
 - `pprof_*` 改动仍需要重启；`reload` 不会帮你重建 pprof 监听器
-
-## 6. 相关页面
-
-- 需要能力边界和限制说明：看 [功能清单与扩展能力](/reference/features)
-- 需要常见问题排查：看 [FAQ](/reference/faq)
-- 需要操作步骤：看 [服务端运维](/guide/server/operations)

@@ -34,7 +34,7 @@
 - 远程 URL 启动描述
 - `npc.conf`
 
-相关说明见 [快速启动与远程源](/guide/client/launch) 和 [NPC Launch 规范](/reference/npc-launch)。
+相关说明见 [快速启动与远程源](#/guide/client/launch) 和 [NPC Launch 规范](#/reference/npc-launch)。
 
 ## 3. 把状态检查交给现有命令和日志
 
@@ -57,9 +57,3 @@
 
 - 现在没有“官方现成 SDK”
 - 现在只有“可以继续二次开发的 CLI 与内部运行逻辑”
-
-## 相关页面
-
-- 需要普通启动方式：看 [客户端连接与配置](/guide/client/connect)
-- 需要更适合集成分发的启动描述：看 [快速启动与远程源](/guide/client/launch)
-- 需要精确 `-launch` 结构：看 [NPC Launch 规范](/reference/npc-launch)

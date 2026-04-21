@@ -1,18 +1,16 @@
 # Docker 安装
 
-Docker 更适合第一次验证环境，也适合独立部署。
+Docker 适合首次验证和独立部署。
 
-如果你只想用最短路径完成一条最小链路验证，优先用这一页。
+## NPS 服务端
 
-## 安装 NPS 服务端
-
-建议先准备一个本地目录用于持久化配置：
+先准备宿主机配置目录：
 
 ```bash
 mkdir -p /opt/nps-conf
 ```
 
-DockerHub：
+启动：
 
 ```bash
 docker pull duan2001/nps
@@ -25,29 +23,35 @@ docker run -d \
   duan2001/nps
 ```
 
-GHCR：
+也可以把镜像名换成 `ghcr.io/djylb/nps`。
+
+容器第一次启动会自动写默认配置。目录映射关系：
+
+| 容器内 | 宿主机 |
+| --- | --- |
+| `/conf/nps.conf` | `/opt/nps-conf/nps.conf` |
+
+修改配置后重启容器：
 
 ```bash
-docker pull ghcr.io/djylb/nps
-docker run -d \
-  --restart=always \
-  --name nps \
-  --net=host \
-  -v /opt/nps-conf:/conf \
-  -v /etc/localtime:/etc/localtime:ro \
-  ghcr.io/djylb/nps
+nano /opt/nps-conf/nps.conf
+docker restart nps
 ```
 
-说明：
+常用字段：
 
-- `--net=host` 可以避免额外端口映射配置，最适合 NPS 这类需要监听多种入口端口的服务
-- 首次启动时，镜像会把示例配置和地理数据复制到 `/conf`，例如 `/conf/nps.conf`
-- `/conf` 用于持久化配置、证书和运行时生成的数据
-- 如果不用 `--net=host`，需要自行映射 `web_port`、`bridge_*`、`http_proxy_port`、`https_proxy_port` 和可能用到的其他端口
+| 字段 | 作用 |
+| --- | --- |
+| `web_username` / `web_password` | Web 管理账号密码 |
+| `web_port` | Web 管理端口 |
+| `bridge_tcp_port` | NPC TCP 连接端口 |
+| `bridge_tls_port` | NPC TLS 连接端口 |
 
-## 安装 NPC 客户端
+`--net=host` 可以避免逐个映射端口。若不用 host 网络，需要自行映射 Web、Bridge、HTTP/HTTPS、P2P 和业务隧道端口。
 
-DockerHub：
+## NPC 客户端
+
+首次连接建议直接传命令行参数，不先写 `npc.conf`。
 
 ```bash
 docker pull duan2001/npc
@@ -62,27 +66,12 @@ docker run -d \
   -log=off
 ```
 
-GHCR：
+也可以把镜像名换成 `ghcr.io/djylb/npc`。
+
+如果确实要使用 `npc.conf`：
 
 ```bash
-docker pull ghcr.io/djylb/npc
-docker run -d \
-  --restart=always \
-  --name npc \
-  --net=host \
-  ghcr.io/djylb/npc \
-  -server=<server-ip>:8024 \
-  -vkey=<client-vkey> \
-  -type=tcp \
-  -log=off
-```
-
-补充：
-
-- `npc` 镜像默认直接执行 `/npc`，不会自动帮你生成 `npc.conf`
-- 如果你要用配置文件模式，可挂载目录后显式传 `-config`，例如：
-
-```bash
+mkdir -p /opt/npc-conf
 docker run -d \
   --restart=always \
   --name npc \
@@ -92,11 +81,3 @@ docker run -d \
   -config=/conf/npc.conf \
   -log=off
 ```
-
-如果你想把客户端的隧道定义写进配置文件，再继续看 [客户端连接与配置](/guide/client/connect)。
-
-## 下一步
-
-- 启动和登录管理界面：看 [启动 NPS 服务端](/getting-started/start-server)
-- 让客户端连上服务端：看 [启动 NPC 客户端](/getting-started/start-client)
-- 只想先完成一条最小链路验证：看 [10 分钟快速开始](/getting-started/quick-start)

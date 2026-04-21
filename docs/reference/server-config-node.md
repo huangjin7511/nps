@@ -1,4 +1,4 @@
-﻿# 服务端配置：节点与平台对接
+# 服务端配置：节点与平台对接
 
 这一页集中放 `run_mode=node`、多平台管理、reverse WebSocket 和 callback 相关配置。
 
@@ -75,11 +75,3 @@
 - 节点会在当前配置目录下自动维护本地协议状态文件，用于保存 `/changes` 事件窗口、幂等缓存和 callback 失败队列；通常无需手工修改
 - 全量业务配置备份导出使用 `GET /api/system/export`；全量业务配置恢复使用 `POST /api/system/import`，仅管理员可用
 - 配置导入成功后节点会切换到新的 `config_epoch`，旧 `changes` cursor、旧幂等缓存和旧会话状态全部失效
-
-## 2. 相关页面
-
-- 需要先在服务端打开节点模式：看 [启用节点模式](/guide/server/node-management)
-- 需要接入顺序和实际用法：看 [平台接入总览](/reference/integration/platform-onboarding)
-- 需要正式接口定义：看 [管理接口说明](/reference/management-api)
-- 需要基础运行项和密钥：看 [基础项与密钥](/reference/server-config-basics)
-

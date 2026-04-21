@@ -11,9 +11,9 @@
 
 | 你当前的问题 | 建议页面 |
 | --- | --- |
-| 我还不清楚应该选哪一类转发方式 | [规则选型总览](/guide/design/tunnel-selection) |
-| 我已经知道业务目标，但还不确定规则类型 | [场景总览与选型](/guide/scenarios/common) |
-| 我已经知道规则类型，只想看具体说明 | [隧道与转发类型](/guide/tunnels/README) |
+| 我还不清楚应该选哪一类转发方式 | [规则选型总览](#/guide/design/tunnel-selection) |
+| 我已经知道业务目标，但还不确定规则类型 | [场景总览与选型](#/guide/scenarios/common) |
+| 我已经知道规则类型，只想看具体说明 | [隧道与转发类型](#/guide/tunnels/README) |
 
 ## 这一部分包含什么
 
@@ -23,6 +23,6 @@
 
 ## 这一部分不包含什么
 
-- 服务启动和运维步骤：看 [操作指南](/guide/README)
-- 精确配置字段、限制和兼容边界：看 [参考资料](/reference/README)
-- API、SDK 和启动协议：看 [接口与集成](/reference/integration/README)
+- 服务启动和运维步骤：看 [操作指南](#/guide/README)
+- 精确配置字段、限制和兼容边界：看 [参考资料](#/reference/README)
+- API、SDK 和启动协议：看 [接口与集成](#/reference/integration/README)

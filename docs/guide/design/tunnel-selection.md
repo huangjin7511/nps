@@ -5,21 +5,21 @@
 1. 我应该选哪一种转发方式？
 2. 我应该去哪里看该类型的完整说明？
 
-如果你只是第一次验证链路，建议先跳到 [10 分钟快速开始](/getting-started/quick-start)，先用一条 TCP 隧道完成验证，再回来选正式方案。
+如果你只是第一次验证链路，建议先跳到 [10 分钟快速开始](#/getting-started/quick-start)，先用一条 TCP 隧道完成验证，再回来选正式方案。
 
 ## 先用这张表判断
 
 | 类型 | 适合什么服务 | 公网侧表现 | 关键特点 | 详细说明 |
 | --- | --- | --- | --- | --- |
-| 域名转发 | 网站、Webhook、管理后台、小程序调试 | 一个域名或路径 | 支持 HTTP/HTTPS、证书、路径路由、请求头处理 | [域名转发](/guide/tunnels/domain-forwarding) |
-| TCP 隧道 | SSH、RDP、数据库、任意 TCP 服务 | 一个公网端口 | 最直接，最常用 | [TCP 隧道](/guide/tunnels/tcp) |
-| UDP 隧道 | DNS、游戏、音视频流、任意 UDP 服务 | 一个公网 UDP 端口 | 只承载 UDP | [UDP 隧道](/guide/tunnels/udp) |
-| HTTP 代理 | 浏览器或程序通过 HTTP 代理访问内网 | 一个 HTTP 代理端口 | 只处理 HTTP 代理请求 | [混合代理](/guide/tunnels/mixed-proxy) |
-| Socks5 代理 | 浏览器、系统代理、开发工具访问内网 | 一个 Socks5 端口 | 更通用，适合多种代理客户端 | [混合代理](/guide/tunnels/mixed-proxy) |
-| 混合代理 | 同时需要 HTTP 和 Socks5 | 一个端口 | 同一入口同时提供 HTTP 和 Socks5 | [混合代理](/guide/tunnels/mixed-proxy) |
-| 私密代理 | 不想直接暴露公网端口的内网服务 | 访问端本地端口 | 仍经 NPS 中转，但公网侧不直接暴露目标端口 | [私密代理](/guide/tunnels/secret) |
-| P2P | 大流量、低延迟、点对点访问 | 访问端本地端口 | 尽量直连，失败时可回退到私密代理 | [P2P 隧道](/guide/tunnels/p2p) |
-| 文件访问 | 公开一个目录或文件集 | 一个公网端口 | 主要通过 `npc.conf` 启动，更像文件入口，不是通用网站反代 | [文件隧道](/guide/tunnels/file) |
+| 域名转发 | 网站、Webhook、管理后台、小程序调试 | 一个域名或路径 | 支持 HTTP/HTTPS、证书、路径路由、请求头处理 | [域名转发](#/guide/tunnels/domain-forwarding) |
+| TCP 隧道 | SSH、RDP、数据库、任意 TCP 服务 | 一个公网端口 | 最直接，最常用 | [TCP 隧道](#/guide/tunnels/tcp) |
+| UDP 隧道 | DNS、游戏、音视频流、任意 UDP 服务 | 一个公网 UDP 端口 | 只承载 UDP | [UDP 隧道](#/guide/tunnels/udp) |
+| HTTP 代理 | 浏览器或程序通过 HTTP 代理访问内网 | 一个 HTTP 代理端口 | 只处理 HTTP 代理请求 | [混合代理](#/guide/tunnels/mixed-proxy) |
+| Socks5 代理 | 浏览器、系统代理、开发工具访问内网 | 一个 Socks5 端口 | 更通用，适合多种代理客户端 | [混合代理](#/guide/tunnels/mixed-proxy) |
+| 混合代理 | 同时需要 HTTP 和 Socks5 | 一个端口 | 同一入口同时提供 HTTP 和 Socks5 | [混合代理](#/guide/tunnels/mixed-proxy) |
+| 私密代理 | 不想直接暴露公网端口的内网服务 | 访问端本地端口 | 仍经 NPS 中转，但公网侧不直接暴露目标端口 | [私密代理](#/guide/tunnels/secret) |
+| P2P | 大流量、低延迟、点对点访问 | 访问端本地端口 | 尽量直连，失败时可回退到私密代理 | [P2P 隧道](#/guide/tunnels/p2p) |
+| 文件访问 | 公开一个目录或文件集 | 一个公网端口 | 主要通过 `npc.conf` 启动，更像文件入口，不是通用网站反代 | [文件隧道](#/guide/tunnels/file) |
 
 ## 几类常见易混淆场景
 
@@ -57,9 +57,3 @@
 | 不想直接公开业务端口 | 私密代理 |
 | 更关心低延迟和直连 | P2P |
 | 暴露本地目录 | 文件访问 |
-
-## 下一步
-
-- 已经知道选什么：看 [隧道与转发类型](/guide/tunnels/README)
-- 想按业务结果快速判断：看 [场景总览与选型](/guide/scenarios/common)
-- 还没部署：看 [10 分钟快速开始](/getting-started/quick-start)

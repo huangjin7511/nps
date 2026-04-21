@@ -2,7 +2,7 @@
 
 这一页集中放客户端与服务端之间的传输能力、连接协议扩展和控制连接行为。
 
-如果你要看站点、证书、Header 或 URL 路由，去看 [站点与 HTTP](/reference/features-http)。
+如果你要看站点、证书、Header 或 URL 路由，去看 [站点与 HTTP](#/reference/features-http)。
 
 ## 数据压缩支持
 
@@ -11,7 +11,7 @@
 常见开启方式：
 
 - `npc.conf` 的 `[common]` 配置中设置 `compress=true`
-- 或通过 `-launch` 传入 `runtime.compress=true`
+- 或通过 `-launch` 的 `config.common.compress` 传入配置型启动描述
 
 说明：
 
@@ -53,7 +53,7 @@ NPS 的主要通信默认已经基于多路复用，无需额外开启。
 如果长时间无法恢复，当前隧道连接会被关闭并重建。
 
 大带宽且允许一定丢包的场景，通常先保持默认参数即可。
-高并发场景可结合 [部署与兼容补充](/reference/notes) 里的 Linux 系统限制一起调整。
+高并发场景可结合 [部署与兼容补充](#/reference/notes) 里的 Linux 系统限制一起调整。
 
 对延迟敏感且存在丢包的场景，可以按操作系统能力调整 `tcp_syn_retries`、`tcp_retries1`、`tcp_retries2` 等内核参数。
 
@@ -70,8 +70,3 @@ NPS 的主要通信默认已经基于多路复用，无需额外开启。
 - 客户端命令行也可以直接带 `-disconnect_timeout=60`
 
 可在 `nps.conf`、`npc.conf` 或客户端命令行中设置 `disconnect_timeout`。
-
-## 相关页面
-
-- 需要桥接端口和连接协议入口：看 [入口端口与桥接](/reference/server-config-ports)
-- 需要客户端运行参数：看 [NPC 命令行参数](/reference/npc-cli)

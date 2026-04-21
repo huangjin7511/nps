@@ -2,7 +2,7 @@
 
 这一页集中放代理转发链路、端口映射、端口复用和目标路由相关能力。
 
-如果你要看站点级 Header、证书或 URL 路由，去看 [站点与 HTTP](/reference/features-http)。
+如果你要看站点级 Header、证书或 URL 路由，去看 [站点与 HTTP](#/reference/features-http)。
 
 ## 嵌套转发支持
 
@@ -71,8 +71,3 @@ target_ip=10.1.50.2
 - 如果 Web 管理也参与复用，通常需要同时配置 `web_host`
 - 如果桥接连接参与复用，通常还要结合 `bridge_host` 或对应连接协议入口一起规划
 - 端口复用会提高部署复杂度，第一次部署建议先分开端口，确认链路可用后再合并
-
-## 相关页面
-
-- 需要桥接端口和入口端口：看 [入口端口与桥接](/reference/server-config-ports)
-- 需要混合代理或端口隧道的用法：看 [隧道与转发类型](/guide/tunnels/README)

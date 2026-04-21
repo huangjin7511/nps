@@ -86,10 +86,3 @@ sc.exe start Npc1
 - 只运行一个实例
 
 那直接用标准 `install` 已经足够，不需要自己手写 systemd 或 `sc` 服务。
-
-## 相关页面
-
-- 服务端基础运行：看 [启动 NPS 服务端](/getting-started/start-server)
-- 客户端基础运行：看 [启动 NPC 客户端](/getting-started/start-client)
-- 服务端维护：看 [服务端运维](/guide/server/operations)
-- 客户端维护：看 [客户端维护与更新](/guide/client/maintenance)

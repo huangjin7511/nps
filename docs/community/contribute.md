@@ -8,12 +8,12 @@
 | --- | --- |
 | 可复现的 Bug、缺失说明或新需求 | 提交 Issue |
 | 小范围文档修正或小范围代码修复 | 直接提交 PR |
-| 改动较大、方向还不明确 | 先开 Issue 或先到 [交流](/community/discuss) 说明 |
+| 改动较大、方向还不明确 | 先开 Issue 或先到 [交流](#/community/discuss) 说明 |
 
 ## 提交问题前先做什么
 
-1. 先看 [FAQ](/reference/faq)
-2. 再看 [补充说明](/reference/notes)
+1. 先看 [FAQ](#/reference/faq)
+2. 再看 [补充说明](#/reference/notes)
 3. 确认是否已经有相同或相似的 [GitHub Issues](https://github.com/djylb/nps/issues)
 
 ## 适合提交 Issue 的内容
@@ -60,4 +60,4 @@
 
 ## 讨论新功能时的建议
 
-如果改动较大，建议先开 Issue 或在 [交流](/community/discuss) 中说明目标和使用场景，再决定是否直接提交 PR。
+如果改动较大，建议先开 Issue 或在 [交流](#/community/discuss) 中说明目标和使用场景，再决定是否直接提交 PR。

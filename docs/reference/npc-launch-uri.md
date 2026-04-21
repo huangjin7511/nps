@@ -77,8 +77,3 @@
 - `npc://launch?data=BASE64_PAYLOAD`
 
 如果需要嵌套 URL、JSON 或另一条 `npc://`，先 base64，再放到 `npc://` 后面。
-
-## 相关页面
-
-- 需要解析顺序和多 payload：看 [基础规则与解析顺序](/reference/npc-launch-basics)
-- 需要 JSON 结构规范：看 [JSON 启动描述](/reference/npc-launch-json)

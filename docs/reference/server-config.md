@@ -32,7 +32,7 @@ nps.exe -conf_path=D:\test\nps
 
 - 参数留空通常表示回落到程序内置默认值、空值或关闭状态，具体以该字段实现为准
 - 大多数配置变更都需要重启 NPS 才会完整生效
-- `nps reload` 现在已经覆盖日志、时区、DNS / NTP、GeoIP / GeoSite / ACL、部分运行限制和大多数管理面配置，但它仍不等同于完整热更新；监听端口、共享端口复用、bridge 入口、P2P / QUIC / pprof 等配置改动仍需要重启；Windows 当前不支持该命令
+- `nps reload` 现在已经覆盖日志、时区、DNS / NTP、GeoIP / GeoSite / ACL、部分运行限制和大多数管理面配置，但它仍不等同于完整热更新；监听端口、共享端口复用、bridge 入口、P2P / QUIC / pprof 等配置改动仍需要重启；Windows 当前不支持该命令，非 Windows 平台也需要当前运行方式能定位到 `nps.pid`
 
 正式部署时，至少要修改这些默认安全项：
 
@@ -45,23 +45,16 @@ nps.exe -conf_path=D:\test\nps
 
 | 你要找什么 | 建议页面 |
 | --- | --- |
-| 基础运行项、时区、`secure_mode`、密钥 | [基础项与密钥](/reference/server-config-basics) |
-| Web 管理后台、登录保护、真实 IP、前置代理安全 | [Web、HTTP 与安全](/reference/server-config-web) |
-| `bridge_*`、`http_proxy_port`、`https_proxy_port`、P2P 端口 | [入口端口与桥接](/reference/server-config-ports) |
-| `run_mode=node`、多平台、reverse WS、callback | [节点与平台对接](/reference/server-config-node) |
-| 访问控制、日志、限制开关、pprof | [访问控制与运行](/reference/server-config-runtime) |
+| 基础运行项、时区、`secure_mode`、密钥 | [基础项与密钥](#/reference/server-config-basics) |
+| Web 管理后台、登录保护、真实 IP、前置代理安全 | [Web、HTTP 与安全](#/reference/server-config-web) |
+| `bridge_*`、`http_proxy_port`、`https_proxy_port`、P2P 端口 | [入口端口与桥接](#/reference/server-config-ports) |
+| `run_mode=node`、多平台、reverse WS、callback | [节点与平台对接](#/reference/server-config-node) |
+| 访问控制、日志、限制开关、pprof | [访问控制与运行](#/reference/server-config-runtime) |
 
 ## 第一次部署通常先看哪几页
 
-1. [基础项与密钥](/reference/server-config-basics)
-2. [Web、HTTP 与安全](/reference/server-config-web)
-3. [入口端口与桥接](/reference/server-config-ports)
+1. [基础项与密钥](#/reference/server-config-basics)
+2. [Web、HTTP 与安全](#/reference/server-config-web)
+3. [入口端口与桥接](#/reference/server-config-ports)
 
-只有在你要接入外部平台或多节点统一控制面时，再继续看 [节点与平台对接](/reference/server-config-node)。
-
-## 相关页面
-
-- 需要启动、重载、更新和服务命令：看 [服务端运维](/guide/server/operations)
-- 需要 HTTPS、证书和前置代理：看 [HTTPS 与反向代理](/guide/server/https-and-proxy)
-- 需要先在服务端打开节点模式：看 [启用节点模式](/guide/server/node-management)
-- 需要节点控制面和平台接入：看 [平台接入总览](/reference/integration/platform-onboarding)
+只有在你要接入外部平台或多节点统一控制面时，再继续看 [节点与平台对接](#/reference/server-config-node)。
