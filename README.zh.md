@@ -49,9 +49,32 @@ NPS 是一款轻量高效的内网穿透代理服务器，支持多种协议（T
 
 ---
 
+## v0.35.0 发布重点
+
+- **节点管理控制面正式成型**
+  新增对外 `/api/*` 管理接口，支持总览快照、批量请求、配置导入导出与带作用域的管理访问，方便外部平台接入。
+
+- **多平台与反向通道能力补齐**
+  节点现支持 `direct`、`reverse`、`dual` 三种平台连接方式，并补充 reverse WS、callback、失败队列、重放和签名能力。
+
+- **管理流程与页面结构重整**
+  管理端围绕用户、客户端、隧道、域名与节点管理做了重构，后端服务层与接口也同步收敛。
+
+- **稳定性与代码质量提升**
+  修复竞态、静态检查与持久化边界问题，补充测试覆盖，提升 P2P、代理和运行时相关路径的稳定性。
+
+进一步阅读：
+
+- [更新日志](https://github.com/djylb/nps/blob/master/CHANGELOG.md)
+- [节点管理与平台对接](https://d-jy.net/docs/nps/#/guide/server/node-management)
+- [管理接口说明](https://d-jy.net/docs/nps/#/reference/management-api)
+- [服务端配置文件](https://d-jy.net/docs/nps/#/reference/server-config)
+
+---
+
 ## 安装与使用
 
-更多详细配置请参考 [文档](https://d-jy.net/docs/nps/)（部分内容可能未更新）。
+更多详细配置请参考 [文档](https://d-jy.net/docs/nps/)；如果你要接入 `v0.35.0` 新增的管理控制面能力，建议从 [节点管理与平台对接](https://d-jy.net/docs/nps/#/guide/server/node-management) 和 [管理接口说明](https://d-jy.net/docs/nps/#/reference/management-api) 开始阅读。
 
 ### [Android](https://github.com/djylb/npsclient) | [OpenWrt](https://github.com/djylb/nps-openwrt)
 
@@ -95,8 +118,11 @@ nps update && nps restart
 > **提示：** 首次安装后请先编辑 `/etc/nps/nps.conf`，确认配置无误后再执行 `nps start`。
 
 #### Windows
-> Windows 7 用户请使用 old 结尾版本 [64](https://github.com/djylb/nps/releases/latest/download/windows_amd64_server_old.tar.gz) / [32](https://github.com/djylb/nps/releases/latest/download/windows_386_server_old.tar.gz)
+> 不想手动判断架构、旧版包或安装目录时，可使用仓库根目录的 `install.ps1`
+>
+> Windows 7 / 8 / 8.1 用户请使用 old 结尾版本 [64](https://github.com/djylb/nps/releases/latest/download/windows_amd64_server_old.tar.gz) / [32](https://github.com/djylb/nps/releases/latest/download/windows_386_server_old.tar.gz)
 ```powershell
+.\install.ps1 nps
 .\nps.exe install
 .\nps.exe start|stop|restart|uninstall
 
@@ -121,8 +147,11 @@ npc update && npc restart
 > **提示：** `npc install` 命令中的参数请以 NPS Web 管理端客户端页面生成的命令为准。
 
 #### Windows
-> Windows 7 用户请使用 old 结尾版本 [64](https://github.com/djylb/nps/releases/latest/download/windows_amd64_client_old.tar.gz) / [32](https://github.com/djylb/nps/releases/latest/download/windows_386_client_old.tar.gz)
+> 不想手动判断架构、旧版包或安装目录时，可使用仓库根目录的 `install.ps1`
+>
+> Windows 7 / 8 / 8.1 用户请使用 old 结尾版本 [64](https://github.com/djylb/nps/releases/latest/download/windows_amd64_client_old.tar.gz) / [32](https://github.com/djylb/nps/releases/latest/download/windows_386_client_old.tar.gz)
 ```powershell
+.\install.ps1 npc
 .\npc.exe install -server="xxx:123,yyy:456" -vkey="xxx,yyy" -type="tls,tcp" -log="off"
 .\npc.exe start|stop|restart|uninstall
 

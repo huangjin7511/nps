@@ -1,8 +1,20 @@
 FROM golang:latest AS builder
 # ARG GOPROXY=direct
 ARG GOPROXY=https://proxy.golang.org
+ARG GEODATA_MODE=if_missing
+ARG GEOIP_URL=https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geoip.dat
+ARG GEOSITE_URL=https://github.com/Loyalsoldier/v2ray-rules-dat/releases/latest/download/geosite.dat
 WORKDIR /go/src/github.com/djylb/nps
 COPY . .
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates curl && \
+    rm -rf /var/lib/apt/lists/*
+RUN chmod +x ./scripts/fetch_geodata.sh && \
+    CONF_DIR=/go/src/github.com/djylb/nps/conf \
+    GEODATA_MODE=$GEODATA_MODE \
+    GEOIP_URL=$GEOIP_URL \
+    GEOSITE_URL=$GEOSITE_URL \
+    ./scripts/fetch_geodata.sh
 RUN go mod edit -go=$(go version | awk '{print $3}' | sed 's/go//') && \
     go mod tidy && \
     go get -d -v ./...
@@ -13,7 +25,9 @@ RUN mkdir -p /app && \
     cp -r ./web/static /app/web/ && \
     cp -r ./web/views /app/web/ && \
     cp ./conf/nps.conf /app/nps.conf.sample && \
-    cp ./entrypoint.nps.sh /app/entrypoint.sh && \
+    cp ./conf/geoip.dat /app/geoip.dat.sample && \
+    cp ./conf/geosite.dat /app/geosite.dat.sample && \
+    cp ./entrypoint_nps.sh /app/entrypoint.sh && \
     chmod +x /app/entrypoint.sh
 
 FROM alpine

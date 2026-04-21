@@ -3,6 +3,9 @@ set -e
 
 export GOPROXY=direct
 
+chmod +x scripts/fetch_geodata.sh
+CONF_DIR="$(pwd)/conf" GEODATA_MODE="${GEODATA_MODE:-always}" ./scripts/fetch_geodata.sh
+
 CURRENT_GO_VERSION=$(go version | awk '{print $3}' | sed 's/go//')
 go mod edit -go=$CURRENT_GO_VERSION
 go mod tidy
@@ -42,7 +45,7 @@ TARGETS=(
 )
 
 NPC_TAR_FILES="conf/npc.conf conf/multi_account.conf"
-NPS_TAR_FILES="conf/nps.conf web/views web/static"
+NPS_TAR_FILES=(conf/nps.conf conf/geoip.dat conf/geosite.dat web/views web/static)
 
 SDK_TARGETS=(
   "windows 386 i686-w64-mingw32-gcc"
@@ -152,4 +155,4 @@ build_sdk() {
 
 build_sdk
 build_all_targets npc "client" TARGETS[@] "$NPC_TAR_FILES"
-build_all_targets nps "server" TARGETS[@] "$NPS_TAR_FILES"
+build_all_targets nps "server" TARGETS[@] "${NPS_TAR_FILES[*]}"
