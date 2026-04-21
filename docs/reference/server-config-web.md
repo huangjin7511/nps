@@ -1,6 +1,6 @@
 # 服务端配置：Web、HTTP 与安全
 
-本页列 Web 管理、登录保护、真实 IP 和前置代理相关配置。端口配置见 [入口端口与桥接](#/reference/server-config-ports)。
+本页列 Web 管理、登录保护、真实 IP 和前置代理相关配置。端口配置见 [入口端口与桥接](/reference/server-config-ports.md)。
 
 ## Web 管理
 

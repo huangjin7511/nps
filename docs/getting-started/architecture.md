@@ -1,6 +1,6 @@
 # 架构与核心概念
 
-这页用于补概念，不是第一次部署必读。只想验证链路时先看 [10 分钟快速开始](#/getting-started/quick-start)。
+这页用于补概念，不是第一次部署必读。只想验证链路时先看 [10 分钟快速开始](/getting-started/quick-start.md)。
 
 ## 四个角色
 
@@ -73,7 +73,7 @@ user -> client -> tunnel / host
 | `443` | HTTPS 代理入口 |
 | `6000` | P2P 协调入口 |
 
-端口以实际 [服务端配置文件](#/reference/server-config) 为准。
+端口以实际 [服务端配置文件](/reference/server-config.md) 为准。
 
 ## 常见误解
 

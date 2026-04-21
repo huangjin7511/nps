@@ -34,7 +34,7 @@
 - 远程 URL 启动描述
 - `npc.conf`
 
-相关说明见 [快速启动与远程源](#/guide/client/launch) 和 [NPC Launch 规范](#/reference/npc-launch)。
+相关说明见 [快速启动与远程源](/guide/client/launch.md) 和 [NPC Launch 规范](/reference/npc-launch.md)。
 
 ## 3. 把状态检查交给现有命令和日志
 

@@ -4,20 +4,20 @@
 
 如果你只是部署一台普通 NPS 服务端，通常不需要先看“启用节点模式”。单节点用户一般先看运维和 HTTPS 即可。
 
-这一部分主要讲操作步骤和任务路径，不重复列出 `nps.conf` 的全部字段定义。需要精确字段时，请同时查看 [服务端配置文件](#/reference/server-config)。
+这一部分主要讲操作步骤和任务路径，不重复列出 `nps.conf` 的全部字段定义。需要精确字段时，请同时查看 [服务端配置文件](/reference/server-config.md)。
 
 ## 先看哪一页
 
 | 你要做什么 | 建议先看 |
 | --- | --- |
-| 首次部署服务端 | [安装指南](#/getting-started/install) 和 [启动 NPS 服务端](#/getting-started/start-server) |
-| 检查目录、登录面板和日志 | [目录、面板与日志](#/guide/server/operations-basics) |
-| 重载、停止、重启和更新 | [重载、重启与更新](#/guide/server/operations-lifecycle) |
-| 配置 HTTPS、证书、真实 IP 或前置代理 | [HTTPS 与反向代理](#/guide/server/https-and-proxy) |
-| 查询精确配置项 | [服务端配置文件](#/reference/server-config) |
-| 在服务端启用节点控制面 | [启用节点模式](#/guide/server/node-management) |
-| 对接外部管理平台或多节点控制面 | [平台接入总览](#/reference/integration/platform-onboarding) |
-| 查询新的节点管理接口 | [管理接口说明](#/reference/management-api) |
+| 首次部署服务端 | [安装指南](/getting-started/install.md) 和 [启动 NPS 服务端](/getting-started/start-server.md) |
+| 检查目录、登录面板和日志 | [目录、面板与日志](/guide/server/operations-basics.md) |
+| 重载、停止、重启和更新 | [重载、重启与更新](/guide/server/operations-lifecycle.md) |
+| 配置 HTTPS、证书、真实 IP 或前置代理 | [HTTPS 与反向代理](/guide/server/https-and-proxy.md) |
+| 查询精确配置项 | [服务端配置文件](/reference/server-config.md) |
+| 在服务端启用节点控制面 | [启用节点模式](/guide/server/node-management.md) |
+| 对接外部管理平台或多节点控制面 | [平台接入总览](/reference/integration/platform-onboarding.md) |
+| 查询新的节点管理接口 | [管理接口说明](/reference/management-api.md) |
 
 ## 这部分主要涉及什么
 
@@ -30,15 +30,15 @@
 
 单节点部署建议：
 
-1. [服务端运维](#/guide/server/operations)
-2. [目录、面板与日志](#/guide/server/operations-basics)
-3. [重载、重启与更新](#/guide/server/operations-lifecycle)
-4. [HTTPS 与反向代理](#/guide/server/https-and-proxy)
-5. [服务端配置文件](#/reference/server-config)
+1. [服务端运维](/guide/server/operations.md)
+2. [目录、面板与日志](/guide/server/operations-basics.md)
+3. [重载、重启与更新](/guide/server/operations-lifecycle.md)
+4. [HTTPS 与反向代理](/guide/server/https-and-proxy.md)
+5. [服务端配置文件](/reference/server-config.md)
 
 平台接入建议：
 
-1. [启用节点模式](#/guide/server/node-management)
-2. [平台接入总览](#/reference/integration/platform-onboarding)
-3. [管理接口说明](#/reference/management-api)
-4. [服务端配置文件](#/reference/server-config)
+1. [启用节点模式](/guide/server/node-management.md)
+2. [平台接入总览](/reference/integration/platform-onboarding.md)
+3. [管理接口说明](/reference/management-api.md)
+4. [服务端配置文件](/reference/server-config.md)

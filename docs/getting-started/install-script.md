@@ -4,7 +4,7 @@
 
 这不表示 Windows 不支持标准安装。
 Windows 的推荐路径是使用发布包，然后执行 `nps.exe install` 或 `npc.exe install` 注册服务。
-如果你希望 Windows 端也用脚本完成下载、解压和选包，可以看 [Windows 安装脚本](#/getting-started/install-windows)。
+如果你希望 Windows 端也用脚本完成下载、解压和选包，可以看 [Windows 安装脚本](/getting-started/install-windows.md)。
 
 适合：
 

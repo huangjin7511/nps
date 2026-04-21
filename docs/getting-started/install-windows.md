@@ -1,6 +1,6 @@
 # Windows 安装脚本
 
-本页介绍仓库根目录的 `install.ps1`。熟悉发布包选择时，也可以直接看 [发布包安装](#/getting-started/install-release)。
+本页介绍仓库根目录的 `install.ps1`。熟悉发布包选择时，也可以直接看 [发布包安装](/getting-started/install-release.md)。
 
 ## 适合场景
 
@@ -87,5 +87,5 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1 nps -PackageVariant old
 
 脚本只负责下载、解压和放置文件。注册服务仍使用二进制命令：
 
-- 服务端看 [启动 NPS 服务端](#/getting-started/start-server)
-- 客户端看 [启动 NPC 客户端](#/getting-started/start-client)
+- 服务端看 [启动 NPS 服务端](/getting-started/start-server.md)
+- 客户端看 [启动 NPC 客户端](/getting-started/start-client.md)

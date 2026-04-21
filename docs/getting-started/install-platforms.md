@@ -2,7 +2,7 @@
 
 这一页收集 Android、OpenWrt、群晖等特定平台入口。
 
-如果你只是普通 Linux、Windows 或 macOS 部署，优先看 [Docker 安装](#/getting-started/install-docker)、[脚本安装](#/getting-started/install-script) 或 [发布包安装](#/getting-started/install-release)。
+如果你只是普通 Linux、Windows 或 macOS 部署，优先看 [Docker 安装](/getting-started/install-docker.md)、[脚本安装](/getting-started/install-script.md) 或 [发布包安装](/getting-started/install-release.md)。
 
 ## Android
 
@@ -27,5 +27,5 @@ Termux：
 
 群晖更推荐使用 Docker 方式运行。历史 `.spk` 方案已不再作为主维护方式。
 
-- 客户端容器启动参数可参考 [NPC 命令行参数](#/reference/npc-cli)
-- 社区中也有第三方套件信息，可在 [交流](#/community/discuss) 中查看
+- 客户端容器启动参数可参考 [NPC 命令行参数](/reference/npc-cli.md)
+- 社区中也有第三方套件信息，可在 [交流](/community/discuss.md) 中查看

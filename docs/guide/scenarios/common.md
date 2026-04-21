@@ -2,8 +2,8 @@
 
 如果你已经知道自己想暴露什么服务，但还不确定应该创建哪种隧道，先看这一页。
 
-如果你还没有完成第一次部署和连接验证，建议先看 [10 分钟快速开始](#/getting-started/quick-start)。
-如果你只是术语还不熟，建议再看 [规则选型总览](#/guide/design/tunnel-selection)。
+如果你还没有完成第一次部署和连接验证，建议先看 [10 分钟快速开始](/getting-started/quick-start.md)。
+如果你只是术语还不熟，建议再看 [规则选型总览](/guide/design/tunnel-selection.md)。
 
 ## 统一前置条件
 
@@ -54,27 +54,27 @@ http://1.1.1.1:8081
 
 | 我想得到什么结果 | 建议类型 | 继续阅读 |
 | --- | --- | --- |
-| 用域名和 HTTPS 发布网站、Webhook、管理后台 | 域名转发 | [域名转发](#/guide/tunnels/domain-forwarding) |
-| 暴露 SSH、RDP、数据库或其他 TCP 服务 | TCP 隧道 | [TCP 隧道](#/guide/tunnels/tcp) |
-| 暴露 DNS、游戏或其他 UDP 服务 | UDP 隧道 | [UDP 隧道](#/guide/tunnels/udp) |
-| 让浏览器、开发工具或系统代理访问整个内网 | HTTP 代理、Socks5 或混合代理 | [混合代理](#/guide/tunnels/mixed-proxy) |
-| 不想直接公开公网业务端口 | 私密代理 | [私密代理](#/guide/tunnels/secret) |
-| 希望尽量点对点直连，减少服务器中转带宽 | P2P 隧道 | [P2P 隧道](#/guide/tunnels/p2p) |
-| 暴露目录或下载文件 | 文件隧道 | [文件隧道](#/guide/tunnels/file) |
+| 用域名和 HTTPS 发布网站、Webhook、管理后台 | 域名转发 | [域名转发](/guide/tunnels/domain-forwarding.md) |
+| 暴露 SSH、RDP、数据库或其他 TCP 服务 | TCP 隧道 | [TCP 隧道](/guide/tunnels/tcp.md) |
+| 暴露 DNS、游戏或其他 UDP 服务 | UDP 隧道 | [UDP 隧道](/guide/tunnels/udp.md) |
+| 让浏览器、开发工具或系统代理访问整个内网 | HTTP 代理、Socks5 或混合代理 | [混合代理](/guide/tunnels/mixed-proxy.md) |
+| 不想直接公开公网业务端口 | 私密代理 | [私密代理](/guide/tunnels/secret.md) |
+| 希望尽量点对点直连，减少服务器中转带宽 | P2P 隧道 | [P2P 隧道](/guide/tunnels/p2p.md) |
+| 暴露目录或下载文件 | 文件隧道 | [文件隧道](/guide/tunnels/file.md) |
 
 ## 常见结果入口
 
-- 发布一个内网站点到公网：看 [域名转发](#/guide/tunnels/domain-forwarding)
-- 通过 `ssh -p <public-port> root@<server-ip>` 访问内网主机：看 [TCP 隧道](#/guide/tunnels/tcp)
-- 把外部设备的 DNS 指向公网服务器：看 [UDP 隧道](#/guide/tunnels/udp)
-- 把公网服务器当成一个代理入口访问整个内网：看 [混合代理](#/guide/tunnels/mixed-proxy)
-- 让访问者只连本地 `127.0.0.1:2000`，而不是公网业务端口：看 [私密代理](#/guide/tunnels/secret)
-- 希望优先直连，失败时再考虑回退：看 [P2P 隧道](#/guide/tunnels/p2p)
-- 需要公开下载目录或临时共享文件：看 [文件隧道](#/guide/tunnels/file)
+- 发布一个内网站点到公网：看 [域名转发](/guide/tunnels/domain-forwarding.md)
+- 通过 `ssh -p <public-port> root@<server-ip>` 访问内网主机：看 [TCP 隧道](/guide/tunnels/tcp.md)
+- 把外部设备的 DNS 指向公网服务器：看 [UDP 隧道](/guide/tunnels/udp.md)
+- 把公网服务器当成一个代理入口访问整个内网：看 [混合代理](/guide/tunnels/mixed-proxy.md)
+- 让访问者只连本地 `127.0.0.1:2000`，而不是公网业务端口：看 [私密代理](/guide/tunnels/secret.md)
+- 希望优先直连，失败时再考虑回退：看 [P2P 隧道](/guide/tunnels/p2p.md)
+- 需要公开下载目录或临时共享文件：看 [文件隧道](/guide/tunnels/file.md)
 
 ## 类型之外还要看什么
 
-- 需要 HTTPS、证书、真实 IP、前置反向代理：看 [HTTPS 与反向代理](#/guide/server/https-and-proxy)
-- 需要限制谁可以访问入口：看 [访问控制与限制](#/reference/features-access) 和 [访问控制与运行](#/reference/server-config-runtime)
-- 需要限制代理模式可以访问哪些目标：看 [混合代理](#/guide/tunnels/mixed-proxy)
-- 需要查询精确配置项：看 [服务端配置文件](#/reference/server-config)
+- 需要 HTTPS、证书、真实 IP、前置反向代理：看 [HTTPS 与反向代理](/guide/server/https-and-proxy.md)
+- 需要限制谁可以访问入口：看 [访问控制与限制](/reference/features-access.md) 和 [访问控制与运行](/reference/server-config-runtime.md)
+- 需要限制代理模式可以访问哪些目标：看 [混合代理](/guide/tunnels/mixed-proxy.md)
+- 需要查询精确配置项：看 [服务端配置文件](/reference/server-config.md)

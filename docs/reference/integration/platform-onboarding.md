@@ -1,6 +1,6 @@
 # 平台接入总览
 
-本页给外部平台和多节点控制面一个最短接入路径。接口细节见 [管理接口说明](#/reference/management-api)，配置字段见 [节点与平台对接](#/reference/server-config-node)。
+本页给外部平台和多节点控制面一个最短接入路径。接口细节见 [管理接口说明](/reference/management-api.md)，配置字段见 [节点与平台对接](/reference/server-config-node.md)。
 
 ## 原则
 

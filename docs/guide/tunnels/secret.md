@@ -100,4 +100,4 @@ target_type=tcp
 - `target` 留空时，访问侧连接类型会按实际来流决定；配置了固定目标时，最终连接类型由隧道自身 `target_type` 决定，只有 `all` 才会按来流在 `tcp/udp` 之间切换
 - `allow_secret_local` 只控制“目标留空时，访问侧是否允许把最终目标切到 NPS 服务器本地服务”；如果要连到 NPS 本地服务，除了 `allow_secret_local`，还需要服务端开启 `allow_local_proxy`
 - Web 管理界面会显示可直接复制的访问端命令；如果页面命令和手写示例不同，优先以页面为准
-- 如果你希望尽量走直连而不是服务器中转，请看 [P2P 隧道](#/guide/tunnels/p2p)
+- 如果你希望尽量走直连而不是服务器中转，请看 [P2P 隧道](/guide/tunnels/p2p.md)

@@ -9,7 +9,7 @@
 - 适合第一次部署，也适合长期维护
 - 提供 Web 管理界面和通用管理接口
 
-[开始阅读](#/README)
-[10 分钟快速开始](#/getting-started/quick-start)
-[接口与集成](#/reference/integration/README)
+[开始阅读](/README.md)
+[10 分钟快速开始](/getting-started/quick-start.md)
+[接口与集成](/reference/integration/README.md)
 [查看仓库](https://github.com/djylb/nps)

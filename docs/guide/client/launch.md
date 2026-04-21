@@ -2,7 +2,7 @@
 
 本页只回答“怎么开始用 `-launch`”，不展开完整协议细节。
 
-本页聚焦实际使用方法。精确规范、JSON 结构、`npc://` 语法和远程源状态语义，统一放在 [NPC Launch 规范](#/reference/npc-launch) 和 [接口与集成](#/reference/integration/README)。
+本页聚焦实际使用方法。精确规范、JSON 结构、`npc://` 语法和远程源状态语义，统一放在 [NPC Launch 规范](/reference/npc-launch.md) 和 [接口与集成](/reference/integration/README.md)。
 
 ## 什么时候用 `-launch`
 
@@ -91,7 +91,7 @@
 - 远程源恢复正常后，会重新拉取并更新连接内容
 - 进程级 `runtime` 参数不是运行中热更新的主要对象，通常仍以进程启动时首次成功解析的结果为准
 
-如果你要精确状态语义，例如 `source_retry`、`source_revoked`、`last-good bundle`，看 [NPC Launch 规范](#/reference/npc-launch)。
+如果你要精确状态语义，例如 `source_retry`、`source_revoked`、`last-good bundle`，看 [NPC Launch 规范](/reference/npc-launch.md)。
 
 ## 使用建议
 

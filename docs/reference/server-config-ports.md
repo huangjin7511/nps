@@ -7,7 +7,7 @@
 - 内置默认值：配置缺失时程序使用的值
 - 仓库示例值：当前仓库 `conf/nps.conf` 的示例配置
 
-如果你要找登录保护、真实 IP 和前置代理安全，去看 [Web、HTTP 与安全](#/reference/server-config-web)。
+如果你要找登录保护、真实 IP 和前置代理安全，去看 [Web、HTTP 与安全](/reference/server-config-web.md)。
 
 ## 1. 代理端口与桥接相关
 

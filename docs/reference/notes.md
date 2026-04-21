@@ -11,7 +11,7 @@
 
 新部署建议显式设置 `secure_mode=true`，只在确实需要兼容旧环境时再调整。
 
-更适合客户端阅读的说明见 [维护与更新](#/guide/client/maintenance) 和 [NPC 命令行参数](#/reference/npc-cli)。
+更适合客户端阅读的说明见 [维护与更新](/guide/client/maintenance.md) 和 [NPC 命令行参数](/reference/npc-cli.md)。
 
 ## Linux 系统限制
 
@@ -36,4 +36,4 @@ Web 管理后台支持多层登录保护，包括：
 - TOTP 双因素认证
 - PoW 校验
 
-这类配置项主要在 [Web、HTTP 与安全](#/reference/server-config-web) 中查看。
+这类配置项主要在 [Web、HTTP 与安全](/reference/server-config-web.md) 中查看。

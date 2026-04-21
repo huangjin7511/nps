@@ -13,18 +13,18 @@
 
 第一次上线建议按这个顺序做：
 
-1. [启动 NPS 服务端](#/getting-started/start-server)
+1. [启动 NPS 服务端](/getting-started/start-server.md)
 2. 登录 Web 管理界面，创建客户端
-3. 在 Web 的“客户端列表”复制启动命令，然后看 [启动 NPC 客户端](#/getting-started/start-client)
+3. 在 Web 的“客户端列表”复制启动命令，然后看 [启动 NPC 客户端](/getting-started/start-client.md)
 4. 确认客户端在线后，再创建第一条规则
 
 ## 先按任务找
 
 | 你要做什么 | 建议页面 |
 | --- | --- |
-| 先把服务端跑起来并能登录 Web 管理界面 | [启动 NPS 服务端](#/getting-started/start-server) |
-| 先让客户端连上服务端 | [启动 NPC 客户端](#/getting-started/start-client) |
-| 需要系统服务、多实例或手动服务 | [服务与多实例](#/guide/service-instances) |
+| 先把服务端跑起来并能登录 Web 管理界面 | [启动 NPS 服务端](/getting-started/start-server.md) |
+| 先让客户端连上服务端 | [启动 NPC 客户端](/getting-started/start-client.md) |
+| 需要系统服务、多实例或手动服务 | [服务与多实例](/guide/service-instances.md) |
 
 ## 最小验收清单
 

@@ -74,7 +74,7 @@ header_set_proxy=nps
 
 如果后端本身是 HTTPS 服务，需要把目标类型设置为 `HTTPS`。
 
-更完整的证书、反代和真实 IP 说明见 [HTTPS 与反向代理](#/guide/server/https-and-proxy)。
+更完整的证书、反代和真实 IP 说明见 [HTTPS 与反向代理](/guide/server/https-and-proxy.md)。
 
 ## 常见能力
 
@@ -87,11 +87,11 @@ header_set_proxy=nps
 - 负载均衡
 - 站点保护
 
-这些高级能力在 [站点与 HTTP](#/reference/features-http) 中有更完整说明。
+这些高级能力在 [站点与 HTTP](/reference/features-http.md) 中有更完整说明。
 
 ## 注意事项
 
 - 域名转发只适合 Web 服务，不适合 SSH、数据库等原始 TCP 服务
 - “模式”描述的是外部访问协议，不是后端协议
 - 后端是 HTTPS 时，记得设置目标类型为 `HTTPS`
-- 如果需要保留真实 IP，建议同时阅读 [HTTPS 与反向代理](#/guide/server/https-and-proxy)
+- 如果需要保留真实 IP，建议同时阅读 [HTTPS 与反向代理](/guide/server/https-and-proxy.md)

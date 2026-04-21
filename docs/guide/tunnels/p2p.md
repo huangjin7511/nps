@@ -82,7 +82,7 @@ Web 管理界面会按用途生成命令，优先复制页面命令。
 - 双方都是 Symmetric NAT 时通常无法直连。
 - NPC 与 NPS 不应处于同一内网环境下作为标准公网 P2P 测试。
 - 不同运营商、路由器和 NAT 类型都会影响结果。
-- 稳定优先时，使用 [私密代理](#/guide/tunnels/secret) 或保留 `fallback_secret=true`。
+- 稳定优先时，使用 [私密代理](/guide/tunnels/secret.md) 或保留 `fallback_secret=true`。
 
 ## 参数
 

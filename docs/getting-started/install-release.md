@@ -2,7 +2,7 @@
 
 如果你不使用 Docker 或安装脚本，推荐直接使用发布包。
 
-如果你是 Windows 新手，不想自己判断架构、旧版包和安装目录，也可以直接改用 [Windows 安装脚本](#/getting-started/install-windows)。
+如果你是 Windows 新手，不想自己判断架构、旧版包和安装目录，也可以直接改用 [Windows 安装脚本](/getting-started/install-windows.md)。
 
 适合：
 
@@ -48,8 +48,8 @@
 
 Windows 下载后建议继续看：
 
-- 服务端首次启动： [启动 NPS 服务端](#/getting-started/start-server)
-- 客户端首次连接： [启动 NPC 客户端](#/getting-started/start-client)
+- 服务端首次启动： [启动 NPS 服务端](/getting-started/start-server.md)
+- 客户端首次连接： [启动 NPC 客户端](/getting-started/start-client.md)
 
 ## Linux
 
@@ -84,4 +84,4 @@ Windows 下载后建议继续看：
 - [Server arm](https://github.com/djylb/nps/releases/latest/download/freebsd_arm_server.tar.gz)
 - [Client arm](https://github.com/djylb/nps/releases/latest/download/freebsd_arm_client.tar.gz)
 
-下载并解压后，继续看 [启动服务端与客户端](#/getting-started/deployment)。
+下载并解压后，继续看 [启动服务端与客户端](/getting-started/deployment.md)。

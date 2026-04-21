@@ -92,5 +92,5 @@
 
 - 第一次连通时显式写 `-server`、`-vkey`、`-type`。
 - 需要配置文件时显式写 `-config=...`，不要依赖默认回退。
-- 需要远程源、多实例或统一启动描述时，再看 [NPC Launch](#/reference/npc-launch)。
+- 需要远程源、多实例或统一启动描述时，再看 [NPC Launch](/reference/npc-launch.md)。
 - `-p2p_timeout` 和 `-tls_enable` 属于兼容或排查参数，新配置通常不用。

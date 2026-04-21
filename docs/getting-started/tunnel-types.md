@@ -2,7 +2,7 @@
 
 这一页只服务第一次部署阶段，帮助你先做出一个足够正确的选择。
 
-如果你已经在做正式方案设计，请直接进入 [规则选型总览](#/guide/design/tunnel-selection)。
+如果你已经在做正式方案设计，请直接进入 [规则选型总览](/guide/design/tunnel-selection.md)。
 
 ## 第一次使用时的建议
 
@@ -14,12 +14,12 @@
 
 | 你的目标 | 第一次建议 | 之后去哪里看完整说明 |
 | --- | --- | --- |
-| 先暴露 SSH、RDP、数据库或任意 TCP 服务 | TCP 隧道 | [TCP 隧道](#/guide/tunnels/tcp) |
-| 先暴露 DNS、游戏或其他 UDP 服务 | UDP 隧道 | [UDP 隧道](#/guide/tunnels/udp) |
-| 网站、Webhook、管理后台 | 域名转发 | [域名转发](#/guide/tunnels/domain-forwarding) |
-| 不想直接公开业务端口 | 私密代理 | [私密代理](#/guide/tunnels/secret) |
-| 更关心低延迟和直连 | P2P | [P2P 隧道](#/guide/tunnels/p2p) |
-| 通过代理访问整个内网 | 混合代理 | [混合代理](#/guide/tunnels/mixed-proxy) |
+| 先暴露 SSH、RDP、数据库或任意 TCP 服务 | TCP 隧道 | [TCP 隧道](/guide/tunnels/tcp.md) |
+| 先暴露 DNS、游戏或其他 UDP 服务 | UDP 隧道 | [UDP 隧道](/guide/tunnels/udp.md) |
+| 网站、Webhook、管理后台 | 域名转发 | [域名转发](/guide/tunnels/domain-forwarding.md) |
+| 不想直接公开业务端口 | 私密代理 | [私密代理](/guide/tunnels/secret.md) |
+| 更关心低延迟和直连 | P2P | [P2P 隧道](/guide/tunnels/p2p.md) |
+| 通过代理访问整个内网 | 混合代理 | [混合代理](/guide/tunnels/mixed-proxy.md) |
 
 ## 两组最常见判断
 

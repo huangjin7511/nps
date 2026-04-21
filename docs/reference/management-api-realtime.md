@@ -1,6 +1,6 @@
 # 管理接口：实时通道与回调
 
-本页列 WS、事件订阅、callback 和 webhook。HTTP 资源接口见 [HTTP 接口目录](#/reference/management-api-http)。
+本页列 WS、事件订阅、callback 和 webhook。HTTP 资源接口见 [HTTP 接口目录](/reference/management-api-http.md)。
 
 ## WebSocket
 

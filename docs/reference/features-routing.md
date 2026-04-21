@@ -2,7 +2,7 @@
 
 这一页集中放代理转发链路、端口映射、端口复用和目标路由相关能力。
 
-如果你要看站点级 Header、证书或 URL 路由，去看 [站点与 HTTP](#/reference/features-http)。
+如果你要看站点级 Header、证书或 URL 路由，去看 [站点与 HTTP](/reference/features-http.md)。
 
 ## 嵌套转发支持
 

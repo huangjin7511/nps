@@ -2,7 +2,7 @@
 
 这一页只做一件事：让 NPC 第一次连上 NPS。
 
-如果服务端还没有起来，先看 [启动 NPS 服务端](#/getting-started/start-server)。
+如果服务端还没有起来，先看 [启动 NPS 服务端](/getting-started/start-server.md)。
 
 如果你是第一次启动 NPC，建议优先直接使用 Web 管理界面“客户端列表”提供的快捷启动命令，暂时不要先使用 `npc.conf`。
 
@@ -100,6 +100,6 @@ npc.exe uninstall
 
 ## 进阶入口
 
-- 需要 `npc.conf`、多份配置、文件隧道或本地访问模式：看 [客户端连接与配置](#/guide/client/connect)
-- 需要 `-launch`、远程源或多实例：看 [快速启动与远程源](#/guide/client/launch)
-- 需要服务注册、多实例和手动服务：看 [服务与多实例](#/guide/service-instances)
+- 需要 `npc.conf`、多份配置、文件隧道或本地访问模式：看 [客户端连接与配置](/guide/client/connect.md)
+- 需要 `-launch`、远程源或多实例：看 [快速启动与远程源](/guide/client/launch.md)
+- 需要服务注册、多实例和手动服务：看 [服务与多实例](/guide/service-instances.md)

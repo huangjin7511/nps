@@ -101,4 +101,4 @@ npc.exe uninstall
 
 ## 4. `-launch`
 
-`-launch` 适合远程源、JSON、多实例或统一分发启动描述。实际使用见 [快速启动与远程源](#/guide/client/launch)，字段规范见 [NPC Launch 规范](#/reference/npc-launch)。
+`-launch` 适合远程源、JSON、多实例或统一分发启动描述。实际使用见 [快速启动与远程源](/guide/client/launch.md)，字段规范见 [NPC Launch 规范](/reference/npc-launch.md)。

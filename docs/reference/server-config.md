@@ -45,16 +45,16 @@ nps.exe -conf_path=D:\test\nps
 
 | 你要找什么 | 建议页面 |
 | --- | --- |
-| 基础运行项、时区、`secure_mode`、密钥 | [基础项与密钥](#/reference/server-config-basics) |
-| Web 管理后台、登录保护、真实 IP、前置代理安全 | [Web、HTTP 与安全](#/reference/server-config-web) |
-| `bridge_*`、`http_proxy_port`、`https_proxy_port`、P2P 端口 | [入口端口与桥接](#/reference/server-config-ports) |
-| `run_mode=node`、多平台、reverse WS、callback | [节点与平台对接](#/reference/server-config-node) |
-| 访问控制、日志、限制开关、pprof | [访问控制与运行](#/reference/server-config-runtime) |
+| 基础运行项、时区、`secure_mode`、密钥 | [基础项与密钥](/reference/server-config-basics.md) |
+| Web 管理后台、登录保护、真实 IP、前置代理安全 | [Web、HTTP 与安全](/reference/server-config-web.md) |
+| `bridge_*`、`http_proxy_port`、`https_proxy_port`、P2P 端口 | [入口端口与桥接](/reference/server-config-ports.md) |
+| `run_mode=node`、多平台、reverse WS、callback | [节点与平台对接](/reference/server-config-node.md) |
+| 访问控制、日志、限制开关、pprof | [访问控制与运行](/reference/server-config-runtime.md) |
 
 ## 第一次部署通常先看哪几页
 
-1. [基础项与密钥](#/reference/server-config-basics)
-2. [Web、HTTP 与安全](#/reference/server-config-web)
-3. [入口端口与桥接](#/reference/server-config-ports)
+1. [基础项与密钥](/reference/server-config-basics.md)
+2. [Web、HTTP 与安全](/reference/server-config-web.md)
+3. [入口端口与桥接](/reference/server-config-ports.md)
 
-只有在你要接入外部平台或多节点统一控制面时，再继续看 [节点与平台对接](#/reference/server-config-node)。
+只有在你要接入外部平台或多节点统一控制面时，再继续看 [节点与平台对接](/reference/server-config-node.md)。

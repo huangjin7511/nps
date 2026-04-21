@@ -1,6 +1,6 @@
 # 启动 NPS 服务端
 
-本页只讲启动服务端并进入 Web 管理界面。还没安装时先看 [安装指南](#/getting-started/install)。
+本页只讲启动服务端并进入 Web 管理界面。还没安装时先看 [安装指南](/getting-started/install.md)。
 
 ## 前台验证
 

@@ -1,6 +1,6 @@
 # NPC Launch：JSON 启动描述
 
-本页说明 `-launch` JSON 结构。基础用法见 [NPC Launch](#/reference/npc-launch)。
+本页说明 `-launch` JSON 结构。基础用法见 [NPC Launch](/reference/npc-launch.md)。
 
 ## 顶层结构
 

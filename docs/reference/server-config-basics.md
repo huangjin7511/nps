@@ -4,8 +4,8 @@
 
 本页涉及的“默认/示例值”表述，优先以仓库当前自带 `conf/nps.conf` 为准。
 
-如果你要找 Web 管理与登录安全，去看 [Web、HTTP 与安全](#/reference/server-config-web)。
-如果你要找节点与平台接入，去看 [节点与平台对接](#/reference/server-config-node)。
+如果你要找 Web 管理与登录安全，去看 [Web、HTTP 与安全](/reference/server-config-web.md)。
+如果你要找节点与平台接入，去看 [节点与平台对接](/reference/server-config-node.md)。
 
 ## 1. 基础配置
 

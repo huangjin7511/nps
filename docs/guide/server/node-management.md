@@ -2,7 +2,7 @@
 
 这一页只回答服务端管理员的一个问题：如何把一台已经部署好的 NPS 打开成“可被外部平台接入”的节点。
 
-平台如何消费正式 `/api/` 管理接口、怎样做快照与增量同步、怎样选择 `direct` / `reverse` / `dual`，统一放到 [平台接入总览](#/reference/integration/platform-onboarding)。
+平台如何消费正式 `/api/` 管理接口、怎样做快照与增量同步、怎样选择 `direct` / `reverse` / `dual`，统一放到 [平台接入总览](/reference/integration/platform-onboarding.md)。
 
 ## 什么时候看这一页
 
@@ -46,7 +46,7 @@ platform_connect_modes=direct
 - `platform_reverse_ws_urls=wss://control.example.com/node/ws`
 - callback 相关参数
 
-这些字段的精确定义见 [节点与平台对接](#/reference/server-config-node)。
+这些字段的精确定义见 [节点与平台对接](/reference/server-config-node.md)。
 
 ## 三种连接模式怎么选
 
@@ -54,7 +54,7 @@ platform_connect_modes=direct
 - `reverse`：平台不能主动连入节点，但节点可以主动出网时使用
 - `dual`：既保留平台主动访问，又保留反向通道，适合复杂网络或渐进迁移
 
-这里先完成“节点侧可用”即可；平台侧完整接入顺序放在 [平台接入总览](#/reference/integration/platform-onboarding)。
+这里先完成“节点侧可用”即可；平台侧完整接入顺序放在 [平台接入总览](/reference/integration/platform-onboarding.md)。
 
 ## 本地验证
 

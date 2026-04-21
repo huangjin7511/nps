@@ -40,7 +40,7 @@ docker restart nps
 | `bridge_tls_port` | NPC TLS 连接端口，示例值 `8025` |
 | `web_username` / `web_password` | Web 管理账号密码 |
 
-其他安装方式见 [安装指南](#/getting-started/install)。
+其他安装方式见 [安装指南](/getting-started/install.md)。
 
 ## 2. 登录 Web 管理端
 

@@ -10,6 +10,6 @@
 - 所有提供部署反馈、兼容性验证和使用建议的用户
 - JetBrains 对开源项目提供的开发工具支持
 
-如果你也想参与改进，可查看 [贡献](#/community/contribute)。
+如果你也想参与改进，可查看 [贡献](/community/contribute.md)。
 
 [![JetBrains logo](https://resources.jetbrains.com/storage/products/company/brand/logos/jetbrains.svg)](https://jb.gg/OpenSource)

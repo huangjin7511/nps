@@ -1,6 +1,6 @@
 # 管理接入入口
 
-本页只列接入入口。完整 HTTP 路径见 [管理接口说明](#/reference/management-api)。
+本页只列接入入口。完整 HTTP 路径见 [管理接口说明](/reference/management-api.md)。
 
 新前端、控制台、SDK 和平台应使用正式 `/api/` 接口；旧页面接口只保留兼容，不建议用于新开发。
 

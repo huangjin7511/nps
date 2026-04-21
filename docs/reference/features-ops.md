@@ -2,7 +2,7 @@
 
 这一页集中放环境变量渲染、健康检查、日志和调试相关能力。
 
-如果你要看 ACL 和配额，去看 [访问控制与限制](#/reference/features-access)。
+如果你要看 ACL 和配额，去看 [访问控制与限制](/reference/features-access.md)。
 
 ## HTTP 缓存（已弃用）
 

@@ -12,7 +12,7 @@ NPS 的公开交流入口主要有两类：
 | 想快速交流使用经验或部署思路 | Telegram |
 | 发现 Bug、文档错误或需要长期跟踪的问题 | GitHub Issues |
 | 提交功能建议并希望后续可检索 | GitHub Issues |
-| 不确定是不是 Bug，想先确认方向 | Telegram 或先看 [贡献](#/community/contribute) |
+| 不确定是不是 Bug，想先确认方向 | Telegram 或先看 [贡献](/community/contribute.md) |
 
 ## 提问前建议准备
 

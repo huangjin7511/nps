@@ -86,6 +86,6 @@ http://<server-ip>:19008/web/readme.txt
 ## 注意事项
 
 - 文件隧道更适合目录和文件访问，不适合作为普通 Web 应用反代
-- 如果需要复杂的网站行为、证书、路径路由等，优先使用 [域名转发](#/guide/tunnels/domain-forwarding)
+- 如果需要复杂的网站行为、证书、路径路由等，优先使用 [域名转发](/guide/tunnels/domain-forwarding.md)
 - 如果需要认证，可以配合 `multi_account`
 - 如果你只是想发布一个下载目录，公开场景优先考虑 `read_only=true`

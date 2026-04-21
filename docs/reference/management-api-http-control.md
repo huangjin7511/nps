@@ -1,6 +1,6 @@
 # 管理接口：控制与示例
 
-本页列控制类接口。资源 CRUD 见 [资源接口](#/reference/management-api-http-resources)。
+本页列控制类接口。资源 CRUD 见 [资源接口](/reference/management-api-http-resources.md)。
 
 ## 控制接口
 

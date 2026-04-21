@@ -1,6 +1,6 @@
 # FAQ
 
-常见问题先看这里。需要精确配置项时，再看 [服务端配置文件](#/reference/server-config)。
+常见问题先看这里。需要精确配置项时，再看 [服务端配置文件](/reference/server-config.md)。
 
 ## 服务端无法启动
 
@@ -60,7 +60,7 @@ nps -conf_path=/etc/nps
 
 ## P2P 直连失败
 
-P2P 成功率取决于 NAT 和网络环境。双方都是 Symmetric NAT 时通常无法直连。稳定优先时，使用 [私密代理](#/guide/tunnels/secret) 或开启回退。
+P2P 成功率取决于 NAT 和网络环境。双方都是 Symmetric NAT 时通常无法直连。稳定优先时，使用 [私密代理](/guide/tunnels/secret.md) 或开启回退。
 
 ## 一条命令连接多个服务端
 
@@ -109,4 +109,4 @@ allow_time_limit=true
 
 ## 还查不到答案
 
-继续看 [功能清单](#/reference/features)、[服务端配置文件](#/reference/server-config) 和 [补充说明](#/reference/notes)。仍无法定位时，到 [GitHub Issues](https://github.com/djylb/nps/issues) 提交问题。
+继续看 [功能清单](/reference/features.md)、[服务端配置文件](/reference/server-config.md) 和 [补充说明](/reference/notes.md)。仍无法定位时，到 [GitHub Issues](https://github.com/djylb/nps/issues) 提交问题。

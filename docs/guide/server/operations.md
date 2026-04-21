@@ -8,16 +8,16 @@
 
 | 你要做什么 | 建议页面 |
 | --- | --- |
-| 确认自己改的是哪个配置目录 | [目录、面板与日志](#/guide/server/operations-basics) |
-| 登录 Web 管理界面 | [目录、面板与日志](#/guide/server/operations-basics) |
-| 排查启动失败、查看日志 | [目录、面板与日志](#/guide/server/operations-basics) |
-| 查看在线状态和流量统计 | [目录、面板与日志](#/guide/server/operations-basics) |
-| 执行重载、停止、重启或更新 | [重载、重启与更新](#/guide/server/operations-lifecycle) |
-| 手动覆盖可执行文件 | [重载、重启与更新](#/guide/server/operations-lifecycle) |
+| 确认自己改的是哪个配置目录 | [目录、面板与日志](/guide/server/operations-basics.md) |
+| 登录 Web 管理界面 | [目录、面板与日志](/guide/server/operations-basics.md) |
+| 排查启动失败、查看日志 | [目录、面板与日志](/guide/server/operations-basics.md) |
+| 查看在线状态和流量统计 | [目录、面板与日志](/guide/server/operations-basics.md) |
+| 执行重载、停止、重启或更新 | [重载、重启与更新](/guide/server/operations-lifecycle.md) |
+| 手动覆盖可执行文件 | [重载、重启与更新](/guide/server/operations-lifecycle.md) |
 
 ## 推荐阅读顺序
 
 第一次部署后，通常按这个顺序看就够了：
 
-1. [目录、面板与日志](#/guide/server/operations-basics)
-2. [重载、重启与更新](#/guide/server/operations-lifecycle)
+1. [目录、面板与日志](/guide/server/operations-basics.md)
+2. [重载、重启与更新](/guide/server/operations-lifecycle.md)
